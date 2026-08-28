@@ -48,3 +48,5 @@ jobs:
           npm exec wrangler -- pages deploy
           --branch=main
           --commit-hash="$GITHUB_SHA"
+      - name: Verify production delivery headers
+        run: npm run check:deployed -- https://seemoji.pages.dev

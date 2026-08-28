@@ -15,6 +15,7 @@ Chromium and runs `npm run check`, which performs:
 
 - Static linting.
 - Unit and architecture tests.
+- Delivery-policy contract tests.
 - A production TypeScript and Vite build.
 - The aggregate production JavaScript budget.
 - Chromium rendering, persistence, validation, responsive-layout, and pixel
@@ -68,6 +69,13 @@ consume the same production artifact rather than independent rebuilds.
 Cloudflare project access is checked immediately after dependency installation,
 before browser installation or test work, so a missing, expired, or malformed
 deployment credential fails cheaply.
+
+After upload, the workflow checks the live production document and its current
+fingerprinted JavaScript asset. Missing CSP, permissions restrictions, defensive
+headers, or immutable asset caching fails the deployment job even when Wrangler
+accepted the upload. This production-only assertion is not duplicated in the
+ordinary CI workflow because local Vite preview does not interpret Cloudflare's
+`_headers` file.
 
 The deploy job deliberately does not reinstall Firefox and WebKit or repeat
 `check:compat`. Run the dormant compatibility workflow before a release when

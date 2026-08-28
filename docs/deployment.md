@@ -49,6 +49,8 @@ The workflow:
 3. Installs Chromium.
 4. Runs `npm run check`, which builds once and tests the built artifact.
 5. Uploads that unchanged `dist/` directory as the `main` production branch.
+6. Polls the production hostname and rejects the release unless the document
+   security policy and fingerprinted-asset cache policy are live.
 
 Overlapping production deployments are serialized and are never cancelled in
 progress. Ordinary pull requests and pushes cannot deploy.
@@ -71,3 +73,26 @@ Deployment itself intentionally has no dry-run substitute because a successful
 Wrangler Pages upload requires a real account, project, and credentials. Verify
 those through the protected GitHub environment rather than storing credentials
 in the repository.
+
+## Static delivery policy
+
+`public/_headers` is copied unchanged to the build output and interpreted by
+Cloudflare Pages. It denies framing and unused browser capabilities, restricts
+scripts and styles to this application, and permits runtime network access only
+to the pinned Twemoji asset host. Blob images remain allowed because the browser
+adapter decodes fetched SVG artwork through an object URL before drawing it to
+the canvas.
+
+Vite's content-hashed `/assets/*` files are cached for one year with
+`immutable`. The HTML document retains Cloudflare's revalidation behavior so a
+new deployment can point clients at new hashes immediately.
+
+Check any deployed hostname with:
+
+```sh
+npm run check:deployed -- https://seemoji.pages.dev
+```
+
+The deployment workflow runs this assertion after upload and retries briefly to
+cover production-route propagation. It checks the real response headers rather
+than merely checking that `_headers` exists in `dist/`.
