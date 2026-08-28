@@ -65,6 +65,9 @@ The `Deploy Pages` workflow is separate from ordinary CI. It runs manually from
 environment, runs the active `npm run check` gate, and uploads the resulting
 `dist/` directory to Cloudflare Pages. The tests and deployment therefore
 consume the same production artifact rather than independent rebuilds.
+Cloudflare project access is checked immediately after dependency installation,
+before browser installation or test work, so a missing, expired, or malformed
+deployment credential fails cheaply.
 
 The deploy job deliberately does not reinstall Firefox and WebKit or repeat
 `check:compat`. Run the dormant compatibility workflow before a release when

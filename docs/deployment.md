@@ -45,9 +45,10 @@ projects. Moving to Git integration would require a new Pages project.
 The workflow:
 
 1. Installs the pinned Node and npm dependencies.
-2. Installs Chromium.
-3. Runs `npm run check`, which builds once and tests the built artifact.
-4. Uploads that unchanged `dist/` directory as the `main` production branch.
+2. Verifies that its Cloudflare credential can see the `seemoji` Pages project.
+3. Installs Chromium.
+4. Runs `npm run check`, which builds once and tests the built artifact.
+5. Uploads that unchanged `dist/` directory as the `main` production branch.
 
 Overlapping production deployments are serialized and are never cancelled in
 progress. Ordinary pull requests and pushes cannot deploy.
