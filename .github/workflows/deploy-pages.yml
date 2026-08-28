@@ -40,7 +40,7 @@ jobs:
       - name: Verify Cloudflare project access
         run: >-
           npm exec wrangler -- pages project list --json |
-          jq -e 'any(.[]; .name == "seemoji")'
+          jq -e 'any(.[]; .["Project Name"] == "seemoji")'
       - run: npx playwright install --with-deps chromium
       - run: npm run check
       - name: Deploy verified production artifact
