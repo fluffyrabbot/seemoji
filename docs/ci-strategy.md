@@ -62,9 +62,16 @@ evidence.
 
 The `Deploy Pages` workflow is separate from ordinary CI. It runs manually from
 `main` or automatically for `v*` tags, enters the protected `production`
-environment, runs `npm run check:compat`, and uploads the resulting `dist/`
-directory to Cloudflare Pages. The tests and deployment therefore consume the
-same production artifact rather than independent rebuilds.
+environment, runs the active `npm run check` gate, and uploads the resulting
+`dist/` directory to Cloudflare Pages. The tests and deployment therefore
+consume the same production artifact rather than independent rebuilds.
+
+The deploy job deliberately does not reinstall Firefox and WebKit or repeat
+`check:compat`. Run the dormant compatibility workflow before a release when
+the policy above calls for it, then use the protected-environment approval as
+the human release boundary. Keeping the compatibility matrix out of the deploy
+job prevents every retry or credential-only redeploy from paying the broad
+browser cost again.
 
 Keep deployment dormant until the Pages project, environment protection, and
 Cloudflare secrets described in [deployment](deployment.md) exist. Do not add a

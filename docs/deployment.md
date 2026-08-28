@@ -8,8 +8,9 @@ builds and verifies the assets. The repository pins Node 24.13.1 in
 `.node-version` and Wrangler 4.127.0 in `package-lock.json`.
 
 `wrangler.jsonc` defines a Direct Upload project named `seemoji` whose output is
-`dist/`. The release workflow uploads the exact directory previously exercised
-by Chromium, Firefox, and WebKit.
+`dist/`. The release workflow uploads the exact directory exercised by the
+active Chromium gate. Firefox and WebKit remain a separate, manual pre-release
+compatibility experiment rather than deployment infrastructure.
 
 ## One-time Cloudflare setup
 
@@ -44,8 +45,8 @@ projects. Moving to Git integration would require a new Pages project.
 The workflow:
 
 1. Installs the pinned Node and npm dependencies.
-2. Installs Chromium, Firefox, and WebKit.
-3. Runs `npm run check:compat`, which builds once and tests the built artifact.
+2. Installs Chromium.
+3. Runs `npm run check`, which builds once and tests the built artifact.
 4. Uploads that unchanged `dist/` directory as the `main` production branch.
 
 Overlapping production deployments are serialized and are never cancelled in
@@ -57,9 +58,13 @@ Run the complete release gate without deploying:
 
 ```sh
 npm ci
-npx playwright install chromium firefox webkit
-npm run check:compat
+npx playwright install chromium
+npm run check
 ```
+
+When browser-facing code or the release policy calls for the dormant
+compatibility experiment, run `npm run check:compat` separately before
+approving production.
 
 Deployment itself intentionally has no dry-run substitute because a successful
 Wrangler Pages upload requires a real account, project, and credentials. Verify
