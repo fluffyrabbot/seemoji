@@ -46,11 +46,13 @@ conditions that should wake the compatibility matrix.
 
 ## Hosting
 
-The application is a static Cloudflare Pages deployment with no Functions,
-server runtime, database, or storage bindings. The release workflow verifies
-the production build in all configured browsers and uploads that same `dist/`
-directory through Wrangler Direct Upload. See [deployment](docs/deployment.md)
-for the one-time project and secret configuration.
+The application is live at [seemoji.pages.dev](https://seemoji.pages.dev/). It
+is a static Cloudflare Pages deployment with no Functions, server runtime,
+database, or storage bindings. The release workflow verifies the production
+build with the active Chromium gate and uploads that same `dist/` directory
+through Wrangler Direct Upload. Firefox and WebKit remain a separate manual
+pre-release experiment. See [deployment](docs/deployment.md) for the project,
+credential, and protected-environment configuration.
 
 ## Architecture
 
