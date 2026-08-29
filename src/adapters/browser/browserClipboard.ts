@@ -36,7 +36,7 @@ export class BrowserClipboard implements ClipboardPort {
 }
 
 export class BrowserFileExport implements FileExportPort {
-  downloadPng(blob: Blob, filename: string): void {
+  download(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

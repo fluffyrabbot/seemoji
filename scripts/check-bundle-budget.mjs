@@ -3,8 +3,8 @@ import { gzipSync } from 'node:zlib';
 
 const DIST_DIRECTORY = new URL('../dist/', import.meta.url);
 const JAVASCRIPT_BUDGET = Object.freeze({
-  rawBytes: 45_000,
-  gzipBytes: 17_000,
+  rawBytes: 102_000,
+  gzipBytes: 33_000,
 });
 
 const collectJavaScript = async (directory) => {

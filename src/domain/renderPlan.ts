@@ -1,10 +1,15 @@
-import type { DesignDocument } from './design';
+import {
+  getEmojiLayer,
+  type DesignDocument,
+  type EmojiLayer,
+  type Transform,
+} from './design';
 
 const DEG = Math.PI / 180;
 const BASE_GLYPH_RATIO = 0.72;
 const SAFETY_MARGIN_RATIO = 0.02;
 
-interface LinearMatrix {
+export interface LinearMatrix {
   readonly a: number;
   readonly b: number;
   readonly c: number;
@@ -13,6 +18,7 @@ interface LinearMatrix {
 
 export interface RenderPlan {
   readonly size: number;
+  readonly visible: boolean;
   readonly glyphSize: number;
   readonly matrix: LinearMatrix & { readonly e: number; readonly f: number };
   readonly blurPixels: number;
@@ -33,12 +39,7 @@ const multiply = (left: LinearMatrix, right: LinearMatrix): LinearMatrix => ({
   d: left.b * right.c + left.d * right.d,
 });
 
-export function createRenderPlan(design: DesignDocument, size: number): RenderPlan {
-  if (!Number.isInteger(size) || size < 16 || size > 2048) {
-    throw new RangeError('render size must be an integer between 16 and 2048');
-  }
-
-  const { transform, appearance } = design;
+export function createLinearTransform(transform: Transform): LinearMatrix {
   const flip: LinearMatrix = {
     a: transform.flipH ? -1 : 1,
     b: 0,
@@ -64,7 +65,24 @@ export function createRenderPlan(design: DesignDocument, size: number): RenderPl
     c: 0,
     d: transform.scaleY,
   };
-  const linear = multiply(multiply(multiply(flip, rotate), skew), scale);
+  return multiply(multiply(multiply(flip, rotate), skew), scale);
+}
+
+export function createLayerMatrix(transform: Transform, size: number) {
+  return {
+    ...createLinearTransform(transform),
+    e: size / 2 + transform.x * size,
+    f: size / 2 + transform.y * size,
+  };
+}
+
+export function createEmojiRenderPlan(layer: EmojiLayer, size: number): RenderPlan {
+  if (!Number.isInteger(size) || size < 16 || size > 2048) {
+    throw new RangeError('render size must be an integer between 16 and 2048');
+  }
+
+  const { transform, appearance, visible } = layer;
+  const linear = createLinearTransform(transform);
 
   const glyphSize = size * BASE_GLYPH_RATIO;
   const half = glyphSize / 2;
@@ -96,18 +114,27 @@ export function createRenderPlan(design: DesignDocument, size: number): RenderPl
 
   return {
     size,
+    visible,
     glyphSize,
-    matrix: { ...fitted, e: size / 2, f: size / 2 },
+    matrix: {
+      ...fitted,
+      e: size / 2 + transform.x * size,
+      f: size / 2 + transform.y * size,
+    },
     blurPixels,
     outline: appearance.outline
       ? { widthPixels: outlinePixels, color: appearance.outline.color }
       : null,
     filters,
     contentBounds: {
-      left: size / 2 - fittedExtentX - padding,
-      top: size / 2 - fittedExtentY - padding,
-      right: size / 2 + fittedExtentX + padding,
-      bottom: size / 2 + fittedExtentY + padding,
+      left: size / 2 + transform.x * size - fittedExtentX - padding,
+      top: size / 2 + transform.y * size - fittedExtentY - padding,
+      right: size / 2 + transform.x * size + fittedExtentX + padding,
+      bottom: size / 2 + transform.y * size + fittedExtentY + padding,
     },
   };
+}
+
+export function createRenderPlan(design: DesignDocument, size: number): RenderPlan {
+  return createEmojiRenderPlan(getEmojiLayer(design), size);
 }

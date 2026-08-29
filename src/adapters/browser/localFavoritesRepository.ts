@@ -43,7 +43,7 @@ export class LocalFavoritesRepository implements FavoritesRepository {
       if (!envelope || envelope.version !== 1 || !Array.isArray(envelope.favorites)) {
         throw new FavoritesRepositoryError('The favorites store has an invalid shape', 'corrupt');
       }
-      return envelope.favorites.map((entry, index) => {
+      const favorites = envelope.favorites.map((entry, index) => {
         const favorite = decodeFavorite(entry);
         if (!favorite.ok) {
           throw new FavoritesRepositoryError(
@@ -53,6 +53,15 @@ export class LocalFavoritesRepository implements FavoritesRepository {
         }
         return favorite.value;
       });
+      const promotedV1 = envelope.favorites.some((entry) => {
+        const favorite = asRecord(entry);
+        return asRecord(favorite?.design)?.version === 1;
+      });
+      const normalizedEnvelope = JSON.stringify({ version: 1, favorites });
+      if (promotedV1 || JSON.stringify(parsed) !== normalizedEnvelope) {
+        this.#persist(favorites);
+      }
+      return favorites;
     } catch (cause) {
       if (cause instanceof FavoritesRepositoryError) throw cause;
       throw new FavoritesRepositoryError('The favorites store could not be read', 'corrupt', {

@@ -1,6 +1,6 @@
 import type { DesignDocument } from '../domain/design';
 import type { EmojiAssetRef } from '../domain/emoji';
-import { createRenderPlan } from '../domain/renderPlan';
+import { createEmojiRenderPlan, createLayerMatrix } from '../domain/renderPlan';
 import type { EmojiAssetSource } from '../ports/emojiAssetSource';
 import type { RenderedFrame, RendererPort } from '../ports/renderer';
 
@@ -42,9 +42,35 @@ export class RenderCoordinator {
       setLru(this.#frames, key, existing, MAX_FRAME_CACHE);
       return existing;
     }
-    const pending = this.#assets
-      .load(design.source)
-      .then((asset) => this.#renderer.render(asset, createRenderPlan(design, size)))
+    const pending = Promise.all(
+      design.layers.map(async (layer) => {
+        if (layer.kind === 'emoji') {
+          return {
+            kind: 'emoji' as const,
+            asset: await this.#assets.load(layer.source),
+            plan: createEmojiRenderPlan(layer, size),
+            opacity: layer.opacity,
+            mask: layer.mask,
+            cacheKey: `${size}:${JSON.stringify(layer)}`,
+          };
+        }
+        const common = {
+          visible: layer.visible,
+          opacity: layer.opacity,
+          matrix: createLayerMatrix(layer.transform, size),
+          mask: layer.mask,
+          cacheKey: `${size}:${JSON.stringify({ ...layer, transform: undefined, opacity: undefined, visible: undefined })}`,
+        };
+        if (layer.kind === 'strokes') return { kind: 'strokes' as const, ...common, strokes: layer.strokes };
+        if (layer.kind === 'shape') return { kind: 'shape' as const, ...common, shape: layer.shape,
+          bounds: layer.bounds, fill: layer.fill, stroke: layer.stroke };
+        if (layer.kind === 'text') return { kind: 'text' as const, ...common, bounds: layer.bounds,
+          text: layer.text, fontSize: layer.fontSize, color: layer.color,
+          fontFamily: layer.fontFamily, align: layer.align };
+        return { kind: 'raster' as const, ...common, resolution: layer.resolution, runs: layer.runs };
+      }),
+    )
+      .then((layers) => this.#renderer.render({ size, layers }))
       .catch((cause: unknown) => {
         this.#frames.delete(key);
         throw cause;

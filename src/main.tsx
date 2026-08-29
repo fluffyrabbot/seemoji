@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserClipboard, BrowserFileExport } from './adapters/browser/browserClipboard';
 import { BrowserCanvasRenderer } from './adapters/browser/canvasRenderer';
 import { LocalFavoritesRepository } from './adapters/browser/localFavoritesRepository';
+import { LocalDocumentRepository } from './adapters/browser/localDocumentRepository';
 import { TwemojiCdnAssetSource } from './adapters/browser/twemojiAssetSource';
 import { RenderCoordinator } from './application/renderCoordinator';
 import type { AppServices } from './application/services';
@@ -14,6 +15,7 @@ const services: AppServices = {
   clipboard: new BrowserClipboard(),
   fileExport: new BrowserFileExport(),
   favorites: new LocalFavoritesRepository(),
+  documents: new LocalDocumentRepository(),
 };
 
 const root = document.getElementById('root');

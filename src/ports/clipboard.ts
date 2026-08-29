@@ -9,5 +9,5 @@ export interface ClipboardPort {
 }
 
 export interface FileExportPort {
-  downloadPng(blob: Blob, filename: string): void;
+  download(blob: Blob, filename: string): void;
 }
