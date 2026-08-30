@@ -1,5 +1,5 @@
 import type { BrushStroke, MaskStroke, StrokePoint } from '../../domain/design';
-import type { RenderPlan } from '../../domain/renderPlan';
+import { toTopLeftOrigin, type AffineMatrix, type RenderPlan } from '../../domain/renderPlan';
 import type {
   RenderLayerInput,
   RenderedFrame,
@@ -179,9 +179,42 @@ function applyMask(
   destination.restore();
 }
 
+function applyTransformedMask(
+  destination: CanvasRenderingContext2D,
+  mask: readonly MaskStroke[],
+  size: number,
+  matrix: AffineMatrix,
+): void {
+  if (mask.length === 0) return;
+  const maskCanvas = createCanvas(size);
+  const maskContext = context(maskCanvas);
+  maskContext.fillStyle = '#ffffff';
+  maskContext.fillRect(0, 0, size, size);
+  const localToOutput = toTopLeftOrigin(matrix, size);
+  for (const stroke of mask) {
+    maskContext.save();
+    maskContext.setTransform(
+      localToOutput.a,
+      localToOutput.b,
+      localToOutput.c,
+      localToOutput.d,
+      localToOutput.e,
+      localToOutput.f,
+    );
+    maskContext.globalCompositeOperation = stroke.mode === 'erase' ? 'destination-out' : 'source-over';
+    drawPath(maskContext, stroke.points, size, stroke.width, '#ffffff', 1);
+    maskContext.restore();
+  }
+  destination.save();
+  destination.globalCompositeOperation = 'destination-in';
+  destination.drawImage(maskCanvas, 0, 0);
+  destination.restore();
+}
+
 function drawEmoji(
   asset: CanvasImageSource,
   plan: RenderPlan,
+  mask: readonly MaskStroke[],
 ): { readonly canvas: HTMLCanvasElement; readonly warnings: readonly string[] } {
   const sourceLayer = createCanvas(plan.size);
   const sourceContext = context(sourceLayer);
@@ -211,6 +244,7 @@ function drawEmoji(
     drawOutline(destination, sourceLayer, plan.outline.widthPixels, plan.outline.color);
   }
   destination.drawImage(sourceLayer, 0, 0);
+  applyTransformedMask(destination, mask, plan.size, plan.matrix);
   return { canvas, warnings };
 }
 
@@ -233,7 +267,7 @@ export class BrowserCanvasRenderer implements RendererPort {
       } else {
         const layerWarnings: string[] = [];
         if (layer.kind === 'emoji') {
-          const rendered = drawEmoji(layer.asset, layer.plan);
+          const rendered = drawEmoji(layer.asset, layer.plan, layer.mask);
           layerCanvas = rendered.canvas;
           layerWarnings.push(...rendered.warnings);
         } else {
@@ -248,8 +282,8 @@ export class BrowserCanvasRenderer implements RendererPort {
           } else {
             drawRaster(layerContext, layer, scene.size);
           }
+          applyMask(layerContext, layer.mask, scene.size);
         }
-        applyMask(context(layerCanvas), layer.mask, scene.size);
         setLru(this.#layerCache, layer.cacheKey, { canvas: layerCanvas, warnings: layerWarnings }, 64);
         warnings.push(...layerWarnings);
       }

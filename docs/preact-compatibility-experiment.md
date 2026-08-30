@@ -91,7 +91,8 @@ still contain no React or Preact imports.
 The post-adoption verification suite provides framework-neutral rendering,
 persistence, validation, and responsive-layout behavior in Chromium, Firefox,
 and WebKit. Chromium runs in the active PR/main gate; Firefox and WebKit remain
-available through an intentionally manual compatibility workflow. The
+manual for day-to-day compatibility checks and are mandatory in the protected
+release gate. The
 deterministic canvas screenshot remains Chromium-only to avoid treating
 engine-specific rasterization as an application regression. At adoption, active
 CI enforced a 45,000 B raw and 17,000 B gzip-9 ceiling across all production

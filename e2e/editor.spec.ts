@@ -107,6 +107,95 @@ test(
   },
 );
 
+test('does not apply delayed emoji validation to a different active project', async ({ page }) => {
+  let reportValidationStarted!: () => void;
+  let releaseValidation!: () => void;
+  const validationStarted = new Promise<void>((resolve) => { reportValidationStarted = resolve; });
+  const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve; });
+  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+    reportValidationStarted();
+    await validationGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/svg+xml',
+      headers: { 'access-control-allow-origin': '*' },
+      body: FIXTURE_SVG,
+    });
+  });
+
+  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await validationStarted;
+  await page.getByRole('button', { name: 'New' }).click();
+  await expect(page.getByLabel('Open project').locator('option')).toHaveCount(3);
+  await expect(page.getByLabel(/Preview of 😀/)).toBeVisible();
+
+  releaseValidation();
+  await expect(page.getByRole('button', { name: 'Use 😄' })).toBeEnabled();
+  await expect(page.getByLabel(/Preview of 😀/)).toBeVisible();
+});
+
+test('does not apply delayed emoji validation over a same-project remote design', async ({
+  page,
+  context,
+}) => {
+  let reportValidationStarted!: () => void;
+  let releaseValidation!: () => void;
+  const validationStarted = new Promise<void>((resolve) => { reportValidationStarted = resolve; });
+  const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve; });
+  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+    reportValidationStarted();
+    await validationGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/svg+xml',
+      headers: { 'access-control-allow-origin': '*' },
+      body: FIXTURE_SVG,
+    });
+  });
+
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await openProjectMenu(second);
+
+  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await validationStarted;
+  await page.getByRole('button', { name: 'Eraser' }).click();
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  const bounds = await stage.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  await page.mouse.down();
+
+  // Firefox shares pointer input across pages. Synthetic activation models an
+  // independent remote actor without completing the first tab's held gesture.
+  await second.getByRole('button', { name: 'Use 😁' }).dispatchEvent('click');
+  await expect(second.getByLabel(/Preview of 😁/)).toBeVisible();
+  await second.getByRole('button', { name: 'Save now' }).dispatchEvent('click');
+  await expect(page.getByLabel(/Preview of 😁/)).toBeVisible();
+  await page.mouse.up();
+
+  releaseValidation();
+  await expect(page.getByRole('button', { name: 'Use 😄' })).toBeEnabled();
+  await expect(page.getByLabel(/Preview of 😁/)).toBeVisible();
+  const pendingDownload = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const exportPath = await (await pendingDownload).path();
+  expect(exportPath).not.toBeNull();
+  const exported = JSON.parse(await readFile(exportPath!, 'utf8')) as {
+    readonly design: {
+      readonly layers: readonly {
+        readonly source?: { readonly grapheme: string };
+        readonly mask: readonly unknown[];
+      }[];
+    };
+  };
+  expect(exported.design.layers[0]?.source?.grapheme).toBe('😁');
+  expect(exported.design.layers[0]?.mask).toEqual([]);
+  await second.close();
+});
+
 test('maximum transforms and effects remain inside every export', async ({ page }) => {
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('137');
   await page.getByText('Advanced transforms').click();
@@ -232,6 +321,167 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   await expect(paintLayer).toHaveCount(0);
   await page.getByRole('button', { name: /Undo/ }).click();
   await expect(paintLayer).toBeVisible();
+});
+
+test('keeps erase and restore masks attached through affine transforms', async ({ page }) => {
+  const viewport = page.getByLabel(/Interactive emoji canvas/);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('10');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('0.8');
+  await page.getByRole('button', { name: /Eraser/ }).click();
+  await page.getByLabel('Brush size').fill('0.08');
+  const bounds = await viewport.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width * 0.68, bounds!.y + bounds!.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.76,
+    bounds!.y + bounds!.height * 0.5,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.72 * 512, 0.5 * 512))[3]).toBeLessThan(10);
+
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-10');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('-90');
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('1.1');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.235 * 512, 0.5 * 512))[3]).toBeLessThan(10);
+
+  await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await page.getByLabel('Brush size').fill('0.024');
+  await page.mouse.move(bounds!.x + bounds!.width * 0.232, bounds!.y + bounds!.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.238,
+    bounds!.y + bounds!.height * 0.5,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.235 * 512, 0.5 * 512))[3]).toBeGreaterThan(200);
+
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('20');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('0');
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('0.6');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.7 * 512, 0.41 * 512))[3]).toBeGreaterThan(200);
+  expect((await previewPixel(page, 0.7 * 512, 0.38 * 512))[3]).toBeLessThan(10);
+});
+
+test('clips outlined and blurred emoji effects with the final transformed mask', async ({ page }) => {
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('10');
+  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('-5');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('0.9');
+  await page.getByRole('spinbutton', { name: 'Blur', exact: true }).fill('4');
+  await page.getByLabel('Outline', { exact: true }).check();
+  await page.getByRole('spinbutton', { name: 'Outline width', exact: true }).fill('4');
+
+  const viewport = page.getByLabel(/Interactive emoji canvas/);
+  await page.getByRole('button', { name: /Eraser/ }).click();
+  await page.getByLabel('Brush size').fill('0.05');
+  const bounds = await viewport.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width * 0.59, bounds!.y + bounds!.height * 0.45);
+  await page.mouse.down();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.61,
+    bounds!.y + bounds!.height * 0.45,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.6 * 512, 0.45 * 512))[3]).toBeLessThan(10);
+  expect((await previewPixel(page, 0.67 * 512, 0.45 * 512))[3]).toBeGreaterThan(200);
+
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-15');
+  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('10');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('-70');
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('1.1');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.35 * 512, 0.6 * 512))[3]).toBeLessThan(10);
+  expect((await previewPixel(page, 0.42 * 512, 0.6 * 512))[3]).toBeGreaterThan(200);
+});
+
+test('maps masks through the full affine transform of non-emoji layers', async ({ page }) => {
+  const design = {
+    version: 2,
+    canvas: { background: 'transparent' },
+    layers: [
+      {
+        id: 'emoji-1', kind: 'emoji', name: 'Emoji', visible: true, opacity: 1,
+        source: { pack: 'twemoji', packVersion: '15.1.0', codepoint: '1f600', grapheme: '😀' },
+        transform: { x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1,
+          skewX: 0, skewY: 0, flipH: false, flipV: false },
+        appearance: { hue: 0, saturation: 1, brightness: 1, blur: 0, outline: null },
+        mask: [],
+      },
+      {
+        id: 'shape-1', kind: 'shape', name: 'Affine shape', visible: true, opacity: 1,
+        transform: { x: 0.1, y: -0.05, rotate: 60, scaleX: 1.2, scaleY: 0.7,
+          skewX: 15, skewY: -10, flipH: true, flipV: false },
+        mask: [], shape: 'rectangle', bounds: { x: 0.2, y: 0.2, width: 0.6, height: 0.6 },
+        fill: '#ff4f9a', stroke: null,
+      },
+    ],
+  };
+  await openProjectMenu(page);
+  await page.getByLabel('Import editable project').setInputFiles({
+    name: 'affine-shape.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(design)),
+  });
+  await expect(page.locator('.layer-select').filter({ hasText: 'Affine shape' })).toBeVisible();
+  await page.getByRole('button', { name: 'Hide “Emoji”' }).click();
+
+  const viewport = page.getByLabel(/Interactive emoji canvas/);
+  await page.getByRole('button', { name: /Eraser/ }).click();
+  await page.getByLabel('Brush size').fill('0.05');
+  const bounds = await viewport.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width * 0.691865, bounds!.y + bounds!.height * 0.284363);
+  await page.mouse.down();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.61354,
+    bounds!.y + bounds!.height * 0.377707,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.652703 * 512, 0.331035 * 512))[3]).toBeLessThan(10);
+
+  await page.getByRole('button', { name: /Select/ }).click();
+  await viewport.focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.702703 * 512, 0.331035 * 512))[3]).toBeLessThan(10);
+
+  await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await page.getByLabel('Brush size').fill('0.012');
+  const restoreBounds = await viewport.boundingBox();
+  expect(restoreBounds).not.toBeNull();
+  await page.mouse.move(
+    restoreBounds!.x + restoreBounds!.width * 0.70035,
+    restoreBounds!.y + restoreBounds!.height * 0.328235,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    restoreBounds!.x + restoreBounds!.width * 0.705052,
+    restoreBounds!.y + restoreBounds!.height * 0.333835,
+    { steps: 4 },
+  );
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.702703 * 512, 0.331035 * 512))[3]).toBeGreaterThan(200);
+
+  await page.getByRole('button', { name: /Select/ }).click();
+  await viewport.focus();
+  await page.keyboard.press('Shift+ArrowDown');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 0.702703 * 512, 0.381035 * 512))[3]).toBeGreaterThan(200);
+  expect((await previewPixel(page, 0.734032 * 512, 0.343697 * 512))[3]).toBeLessThan(10);
 });
 
 test('renames, duplicates, fades, and transforms a complete paint layer', async ({ page }) => {
@@ -411,6 +661,33 @@ test('persists starred projects and creates explicit template copies', async ({ 
   await page.getByRole('button', { name: 'tilty', exact: true }).click();
   await runProjectAction(page, '★ Remove from templates');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toHaveCount(0);
+});
+
+test('captures accepted edits synchronously when pagehide follows in the same task', async ({ page }) => {
+  await page.evaluate(async () => {
+    const name = document.querySelector<HTMLInputElement>('input[aria-label="Project name"]');
+    const rotate = [...document.querySelectorAll<HTMLInputElement>('input[type="number"]')]
+      .find((input) => input.labels
+        ? [...input.labels].some((label) => label.textContent?.trim() === 'Rotate')
+        : false);
+    if (!name || !rotate) throw new Error('missing synchronous durability controls');
+    name.value = 'Immediate durability';
+    name.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    rotate.value = '43';
+    rotate.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    await Promise.resolve();
+    const status = document.querySelector('[role="status"].persistence-status');
+    if (status?.textContent !== 'Saving locally…') {
+      throw new Error(`edit did not synchronously enter the persistence journal: ${status?.textContent}`);
+    }
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+  });
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByLabel('Project name')).toHaveValue('Immediate durability');
+  await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('43');
 });
 
 test('autosaves projects, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
@@ -650,6 +927,105 @@ test('coordinates two tabs and preserves simultaneous edits as a conflict copy',
     .filter((name) => name !== 'Open…');
   expect(resolvedNames).not.toContainEqual(expect.stringContaining('(conflict copy)'));
   expect(resolvedNames).toHaveLength(2);
+  await second.close();
+});
+
+test('cancels an in-progress canvas gesture when another tab switches projects', async ({
+  page,
+  context,
+}) => {
+  await page.getByLabel('Project name').fill('Gesture source');
+  await runProjectAction(page, 'Save now');
+  await page.getByRole('button', { name: 'New' }).click();
+  await page.getByLabel('Project name').fill('Gesture destination');
+  await runProjectAction(page, 'Save now');
+  await page.getByLabel('Open project').selectOption({ label: 'Gesture source' });
+  await expect(page.getByLabel('Project name')).toHaveValue('Gesture source');
+
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByLabel('Project name')).toHaveValue('Gesture source');
+
+  await page.getByRole('button', { name: 'Eraser' }).click();
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  const bounds = await stage.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  await page.mouse.down();
+
+  await second.getByLabel('Open project').selectOption({ label: 'Gesture destination' });
+  await expect(page.getByLabel('Project name')).toHaveValue('Gesture destination');
+  await page.mouse.up();
+
+  const pendingDownload = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const exportPath = await (await pendingDownload).path();
+  expect(exportPath).not.toBeNull();
+  const exported = JSON.parse(await readFile(exportPath!, 'utf8')) as {
+    readonly name: string;
+    readonly design: { readonly layers: readonly { readonly mask: readonly unknown[] }[] };
+  };
+  expect(exported.name).toBe('Gesture destination');
+  expect(exported.design.layers[0]?.mask).toEqual([]);
+  await second.close();
+});
+
+test('does not flood-fill pixels from a stale preview after a remote project switch', async ({
+  page,
+  context,
+}) => {
+  await page.getByLabel('Project name').fill('Fill source');
+  await runProjectAction(page, 'Save now');
+  await page.getByRole('button', { name: 'New' }).click();
+  await page.getByLabel('Project name').fill('Fill destination');
+  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await expect(page.getByLabel(/Preview of 😄/)).toBeVisible();
+  await runProjectAction(page, 'Save now');
+  await page.getByLabel('Open project').selectOption({ label: 'Fill source' });
+  await expect(page.getByLabel('Project name')).toHaveValue('Fill source');
+  await page.reload();
+  await expect(page.getByLabel(/Preview of 😀/)).toBeVisible();
+
+  let reportRenderStarted!: () => void;
+  let releaseRender!: () => void;
+  const renderStarted = new Promise<void>((resolve) => { reportRenderStarted = resolve; });
+  const renderGate = new Promise<void>((resolve) => { releaseRender = resolve; });
+  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+    reportRenderStarted();
+    await renderGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/svg+xml',
+      headers: { 'access-control-allow-origin': '*' },
+      body: FIXTURE_SVG,
+    });
+  });
+
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByLabel('Project name')).toHaveValue('Fill source');
+  await second.getByLabel('Open project').selectOption({ label: 'Fill destination' });
+  await renderStarted;
+  await expect(page.getByLabel('Project name')).toHaveValue('Fill destination');
+
+  await page.getByRole('button', { name: 'Fill', exact: true }).click();
+  await page.getByLabel(/Interactive emoji canvas/).click();
+  await expect(page.locator('.notice')).toContainText('finish rendering before filling');
+
+  releaseRender();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  const pendingDownload = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const exportPath = await (await pendingDownload).path();
+  expect(exportPath).not.toBeNull();
+  const exported = JSON.parse(await readFile(exportPath!, 'utf8')) as {
+    readonly name: string;
+    readonly design: { readonly layers: readonly unknown[] };
+  };
+  expect(exported.name).toBe('Fill destination');
+  expect(exported.design.layers).toHaveLength(1);
   await second.close();
 });
 

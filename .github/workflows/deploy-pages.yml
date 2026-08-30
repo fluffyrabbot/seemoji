@@ -2,8 +2,12 @@ name: Deploy Pages
 
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
+    inputs:
+      bootstrap_legacy_baseline:
+        description: One-time migration only when canonical production has no release manifest
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -13,16 +17,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    environment: production
-    env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  verify:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - name: Require the reviewed main branch
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run complete release verification
+        run: npm run check:release
+        env:
+          SEEMOJI_RELEASE_COMMIT: ${{ github.sha }}
+      - name: Upload immutable verified artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: seemoji-production-${{ github.sha }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: https://seemoji.pages.dev
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Download verified artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: seemoji-production-${{ github.sha }}
+          path: dist
+      - name: Reverify downloaded artifact
+        run: node scripts/verify-release-artifact.mjs dist "$GITHUB_SHA"
+
       - name: Require Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           test -n "$CLOUDFLARE_ACCOUNT_ID" || {
             echo 'Missing production environment secret: CLOUDFLARE_ACCOUNT_ID'
@@ -32,21 +76,153 @@ jobs:
             echo 'Missing production environment secret: CLOUDFLARE_API_TOKEN'
             exit 1
           }
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .node-version
-          cache: npm
-      - run: npm ci
       - name: Verify Cloudflare project access
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: >-
           npm exec wrangler -- pages project list --json |
           jq -e 'any(.[]; .["Project Name"] == "seemoji")'
-      - run: npx playwright install --with-deps chromium
-      - run: npm run check
-      - name: Deploy verified production artifact
+
+      - name: Deploy release candidate preview
+        id: preview
+        timeout-minutes: 10
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          preview_branch="release-${GITHUB_SHA:0:12}"
+          npm exec wrangler -- pages deploy dist \
+            --project-name=seemoji \
+            --branch="$preview_branch" \
+            --commit-hash="$GITHUB_SHA" \
+            --commit-dirty=false
+          preview_url="$(
+            npm exec wrangler -- pages deployment list \
+              --project-name=seemoji \
+              --environment=preview \
+              --json |
+            jq -er --arg branch "$preview_branch" \
+              '[.[] | select(.Branch == $branch)][0].Deployment // empty'
+          )"
+          if ! [[ "$preview_url" =~ ^https://[0-9a-f]{8}\.seemoji\.pages\.dev$ ]]; then
+            echo "Could not resolve immutable preview deployment URL"
+            exit 1
+          fi
+          echo "url=$preview_url" >> "$GITHUB_OUTPUT"
+      - name: Verify immutable preview deployment
+        timeout-minutes: 5
+        env:
+          SEEMOJI_PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        run: npm run check:deployed -- "$SEEMOJI_PREVIEW_URL" "$GITHUB_SHA"
+
+      - name: Read canonical production identity
+        id: canonical
+        timeout-minutes: 2
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          identity="$RUNNER_TEMP/seemoji-canonical-production.json"
+          node scripts/get-canonical-pages-deployment.mjs seemoji "$identity"
+          canonical_id="$(jq -er '.id' "$identity")"
+          canonical_commit="$(jq -er '.deployment_trigger.metadata.commit_hash' "$identity")"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "id=$canonical_id" >> "$GITHUB_OUTPUT"
+          echo "commit=$canonical_commit" >> "$GITHUB_OUTPUT"
+          echo "bootstrap-artifact=seemoji-legacy-bootstrap-target-${GITHUB_RUN_ID}-${canonical_id}" \
+            >> "$GITHUB_OUTPUT"
+      - name: Require an actual legacy baseline for one-time migration
+        if: ${{ inputs.bootstrap_legacy_baseline }}
+        timeout-minutes: 2
+        env:
+          SEEMOJI_CANONICAL_IDENTITY: ${{ steps.canonical.outputs.identity }}
         run: >-
-          npm exec wrangler -- pages deploy
-          --branch=main
-          --commit-hash="$GITHUB_SHA"
-      - name: Verify production delivery headers
-        run: npm run check:deployed -- https://seemoji.pages.dev
+          node scripts/assert-legacy-production-baseline.mjs
+          "$SEEMOJI_CANONICAL_IDENTITY"
+      - name: Persist legacy bootstrap rollback identity
+        if: ${{ inputs.bootstrap_legacy_baseline }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.canonical.outputs.bootstrap-artifact }}
+          path: ${{ steps.canonical.outputs.identity }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Capture known-good production recovery manifest
+        if: ${{ !inputs.bootstrap_legacy_baseline }}
+        id: previous
+        timeout-minutes: 2
+        env:
+          SEEMOJI_CANONICAL_IDENTITY: ${{ steps.canonical.outputs.identity }}
+        run: |
+          recovery_directory="$RUNNER_TEMP/seemoji-production-recovery"
+          recovery_manifest="$recovery_directory/recovery.json"
+          node scripts/capture-production-recovery.mjs \
+            "$SEEMOJI_CANONICAL_IDENTITY" \
+            "$recovery_directory"
+          previous_id="$(
+            jq -er '.deployment.id' "$recovery_manifest"
+          )"
+          if ! [[ "$previous_id" =~ ^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$ ]]; then
+            echo "Could not resolve a production rollback target"
+            exit 1
+          fi
+          echo "id=$previous_id" >> "$GITHUB_OUTPUT"
+          echo "commit=$(jq -er '.deployment.commit' "$recovery_manifest")" >> "$GITHUB_OUTPUT"
+          echo "artifact=seemoji-production-recovery-${GITHUB_RUN_ID}-${previous_id}" \
+            >> "$GITHUB_OUTPUT"
+          echo "directory=$recovery_directory" >> "$GITHUB_OUTPUT"
+          echo "manifest=$recovery_manifest" >> "$GITHUB_OUTPUT"
+      - name: Persist known-good production recovery bundle
+        if: ${{ !inputs.bootstrap_legacy_baseline }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.previous.outputs.artifact }}
+          path: ${{ steps.previous.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Deploy verified artifact to production
+        id: production
+        timeout-minutes: 10
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npm exec wrangler -- pages deploy dist \
+            --project-name=seemoji \
+            --branch=main \
+            --commit-hash="$GITHUB_SHA" \
+            --commit-dirty=false
+      - name: Verify exact production release
+        id: production-verification
+        timeout-minutes: 5
+        run: npm run check:deployed -- https://seemoji.pages.dev "$GITHUB_SHA"
+
+      - name: Roll back failed production release
+        id: rollback
+        if: ${{ (failure() || cancelled()) && steps.production.outcome != '' && steps.production.outcome != 'skipped' }}
+        timeout-minutes: 5
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SEEMOJI_ROLLBACK_DEPLOYMENT_ID: ${{ steps.canonical.outputs.id }}
+          SEEMOJI_ROLLBACK_COMMIT: ${{ steps.canonical.outputs.commit }}
+        run: |
+          node scripts/rollback-pages-deployment.mjs \
+            seemoji \
+            "$SEEMOJI_ROLLBACK_DEPLOYMENT_ID" \
+            "$SEEMOJI_ROLLBACK_COMMIT"
+          echo 'confirmed=true' >> "$GITHUB_OUTPUT"
+          echo "Production rollback was confirmed at deployment $SEEMOJI_ROLLBACK_DEPLOYMENT_ID" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify recovered production bytes
+        if: ${{ (failure() || cancelled()) && !inputs.bootstrap_legacy_baseline && steps.rollback.outputs.confirmed == 'true' }}
+        timeout-minutes: 5
+        env:
+          SEEMOJI_RECOVERY_MANIFEST: ${{ steps.previous.outputs.manifest }}
+        run: >-
+          node scripts/verify-production-recovery.mjs
+          https://seemoji.pages.dev
+          "$SEEMOJI_RECOVERY_MANIFEST"

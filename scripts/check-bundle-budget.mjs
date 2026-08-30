@@ -2,11 +2,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 
 const DIST_DIRECTORY = new URL('../dist/', import.meta.url);
-// Strict archives plus hash-guarded quarantine export/purge, storage health, durable
-// conflict resolution, schema migration, and cross-browser invalidation measure 127.1k/39.2k gzip-9.
+// The synchronous editor/workspace journal, capacity enforcement, and affine-local masks
+// intentionally raise the reliability baseline to about 133k/41k gzip-9. These round
+// product budgets retain meaningful headroom without weakening the initial-load ceiling.
 const JAVASCRIPT_BUDGET = Object.freeze({
-  rawBytes: 128_000,
-  gzipBytes: 40_000,
+  rawBytes: 144_000,
+  gzipBytes: 45_000,
 });
 
 const collectJavaScript = async (directory) => {

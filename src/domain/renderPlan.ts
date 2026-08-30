@@ -16,11 +16,16 @@ export interface LinearMatrix {
   readonly d: number;
 }
 
+export interface AffineMatrix extends LinearMatrix {
+  readonly e: number;
+  readonly f: number;
+}
+
 export interface RenderPlan {
   readonly size: number;
   readonly visible: boolean;
   readonly glyphSize: number;
-  readonly matrix: LinearMatrix & { readonly e: number; readonly f: number };
+  readonly matrix: AffineMatrix;
   readonly blurPixels: number;
   readonly outline: { readonly widthPixels: number; readonly color: string } | null;
   readonly filters: readonly string[];
@@ -68,11 +73,20 @@ export function createLinearTransform(transform: Transform): LinearMatrix {
   return multiply(multiply(multiply(flip, rotate), skew), scale);
 }
 
-export function createLayerMatrix(transform: Transform, size: number) {
+export function createLayerMatrix(transform: Transform, size: number): AffineMatrix {
   return {
     ...createLinearTransform(transform),
     e: size / 2 + transform.x * size,
     f: size / 2 + transform.y * size,
+  };
+}
+
+/** Converts a center-origin layer matrix to one that accepts top-left-origin canvas coordinates. */
+export function toTopLeftOrigin(matrix: AffineMatrix, size: number): AffineMatrix {
+  return {
+    ...matrix,
+    e: matrix.e - (matrix.a + matrix.c) * size / 2,
+    f: matrix.f - (matrix.b + matrix.d) * size / 2,
   };
 }
 

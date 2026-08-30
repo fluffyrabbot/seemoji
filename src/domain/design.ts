@@ -30,7 +30,7 @@ export interface Appearance {
 }
 
 export interface StrokePoint {
-  /** Canvas-relative coordinates and normalized pointer pressure. */
+  /** Layer-local normalized coordinates and normalized pointer pressure. */
   readonly x: number;
   readonly y: number;
   readonly pressure: number;
@@ -39,7 +39,7 @@ export interface StrokePoint {
 export interface BrushStroke {
   readonly id: string;
   readonly points: readonly StrokePoint[];
-  /** Width as a fraction of the output square. */
+  /** Width in the layer's normalized coordinate space. */
   readonly width: number;
   readonly color: string;
   readonly opacity: number;
@@ -49,7 +49,7 @@ export interface MaskStroke {
   readonly id: string;
   readonly mode: 'erase' | 'restore';
   readonly points: readonly StrokePoint[];
-  /** Width as a fraction of the output square. */
+  /** Width in the layer's normalized coordinate space. */
   readonly width: number;
 }
 

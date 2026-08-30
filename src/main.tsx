@@ -6,6 +6,7 @@ import { IndexedDbProjectRepository } from './adapters/browser/indexedDbProjectR
 import { BrowserWorkspaceSync } from './adapters/browser/browserWorkspaceSync';
 import { BrowserStorageHealth } from './adapters/browser/browserStorageHealth';
 import { TwemojiCdnAssetSource } from './adapters/browser/twemojiAssetSource';
+import { EditorWorkspaceStore } from './application/editorWorkspaceStore';
 import { RenderCoordinator } from './application/renderCoordinator';
 import type { AppServices } from './application/services';
 import { WorkspaceController } from './application/workspaceController';
@@ -16,9 +17,11 @@ const services: AppServices = {
   renderer: new RenderCoordinator(new TwemojiCdnAssetSource(), new BrowserCanvasRenderer()),
   clipboard: new BrowserClipboard(),
   fileExport: new BrowserFileExport(),
-  workspace: new WorkspaceController(new IndexedDbProjectRepository(), {
-    sync: new BrowserWorkspaceSync(),
-  }),
+  workspace: new EditorWorkspaceStore(
+    new WorkspaceController(new IndexedDbProjectRepository(), {
+      sync: new BrowserWorkspaceSync(),
+    }),
+  ),
   storageHealth: new BrowserStorageHealth(),
 };
 

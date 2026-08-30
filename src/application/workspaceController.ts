@@ -22,7 +22,12 @@ import type { WorkspaceChange, WorkspaceSync } from '../ports/workspaceSync';
 
 export type { ProjectConflictResolution } from '../ports/projectRepository';
 
-export type WorkspacePersistenceStatus = 'saved' | 'saving' | 'conflict' | 'error';
+export type WorkspacePersistenceStatus =
+  | 'saved'
+  | 'saving'
+  | 'reconciling'
+  | 'conflict'
+  | 'error';
 
 export interface WorkspaceSnapshot {
   readonly projects: readonly Project[];
@@ -42,6 +47,11 @@ interface ControllerOptions {
   readonly debounceMilliseconds?: number;
   readonly sync?: WorkspaceSync | null;
   readonly scheduler?: WorkspaceScheduler;
+}
+
+interface PendingConflictReconciliation {
+  readonly sourceProjectId: string;
+  readonly conflictProjectId: string;
 }
 
 export interface WorkspaceScheduler {
@@ -73,6 +83,10 @@ export class WorkspaceController {
   #activeProjectId: string | null = null;
   #issues: readonly ProjectRecordIssue[] = [];
   #pendingProject: Project | null = null;
+  #pendingEditGeneration = 0;
+  #latestEditGeneration = 0;
+  #repositoryAuthorityEpoch = 0;
+  #pendingConflictReconciliation: PendingConflictReconciliation | null = null;
   #saveTimer: unknown | null = null;
   #writeChain: Promise<void> = Promise.resolve();
   #writesInFlight = 0;
@@ -113,15 +127,13 @@ export class WorkspaceController {
     this.#adoptLoaded(loaded.projects, loaded.activeProjectId, loaded.issues);
     const requested = this.#projects.find((project) => project.id === this.#activeProjectId);
     if (requested) {
-      this.#loaded = true;
-      return this.snapshot();
+      return this.#completeLoad();
     }
     const existing = this.#projects[0];
     if (existing) {
       this.#activeProjectId = existing.id;
-      await this.#repository.setActive(existing.id);
-      this.#loaded = true;
-      return this.snapshot();
+      await this.#repository.setActive(existing.id, existing.revision);
+      return this.#completeLoad();
     }
     const created = this.#newProject(DEFAULT_DESIGN, 'Untitled design');
     const persisted = await this.#repository.save(created, {
@@ -131,9 +143,8 @@ export class WorkspaceController {
     this.#projects = [persisted];
     this.#persistedRevisions.set(persisted.id, persisted.revision);
     this.#activeProjectId = persisted.id;
-    this.#loaded = true;
     this.#publish([persisted.id]);
-    return this.snapshot();
+    return this.#completeLoad();
   }
 
   snapshot(): WorkspaceSnapshot {
@@ -143,6 +154,9 @@ export class WorkspaceController {
   }
 
   updateActive(name: string, design: DesignDocument): WorkspaceSnapshot {
+    if (this.#status === 'reconciling') {
+      throw new Error('Conflict recovery is still in progress');
+    }
     const current = this.snapshot().activeProject;
     const project: Project = {
       ...current,
@@ -152,6 +166,7 @@ export class WorkspaceController {
     };
     this.#replace(project);
     this.#pendingProject = project;
+    this.#pendingEditGeneration = ++this.#latestEditGeneration;
     this.#scheduleSave();
     return this.snapshot();
   }
@@ -161,17 +176,49 @@ export class WorkspaceController {
       this.#scheduler.cancel(this.#saveTimer);
       this.#saveTimer = null;
     }
+    if (this.#pendingConflictReconciliation) {
+      await this.#enqueue(async () => {
+        if (!this.#pendingConflictReconciliation) return;
+        this.#notifyStatus('reconciling');
+        try {
+          await this.#reconcileDurableConflict();
+        } catch (cause) {
+          this.#notifyStatus('error');
+          throw cause;
+        }
+      });
+    }
     const pending = this.#pendingProject;
     if (!pending) return this.#writeChain;
+    const pendingEditGeneration = this.#pendingEditGeneration;
+    const repositoryAuthorityEpoch = this.#repositoryAuthorityEpoch;
     this.#pendingProject = null;
+    this.#pendingEditGeneration = 0;
     await this.#enqueue(async () => {
+      if (repositoryAuthorityEpoch !== this.#repositoryAuthorityEpoch) return;
       try {
         await this.#persistExisting(pending);
-        if (!this.#pendingProject) this.#notifyStatus('saved');
+        if (
+          !this.#pendingProject
+          && pendingEditGeneration === this.#latestEditGeneration
+        ) this.#notifyStatus('saved');
       } catch (cause) {
         if (cause instanceof ProjectConflictError) {
-          await this.#preserveConflictCopy(pending, cause);
+          // Every already-queued save was authorized by the stale repository view.
+          // Invalidate them before crossing the conflict-preservation boundary.
+          this.#repositoryAuthorityEpoch += 1;
+          this.#notifyStatus('reconciling');
+          try {
+            await this.#preserveConflictCopy(pending, cause, pendingEditGeneration);
+          } catch (recoveryCause) {
+            this.#notifyStatus('error');
+            throw recoveryCause;
+          }
           return;
+        }
+        if (!this.#pendingProject && pendingEditGeneration === this.#latestEditGeneration) {
+          this.#pendingProject = pending;
+          this.#pendingEditGeneration = pendingEditGeneration;
         }
         this.#notifyStatus('error');
         throw cause;
@@ -202,17 +249,35 @@ export class WorkspaceController {
     if (!this.#projects.some((project) => project.id === id)) {
       throw new Error(`Project ${id} does not exist`);
     }
+    const commandAuthorityEpoch = this.#repositoryAuthorityEpoch;
     await this.flush();
-    await this.#enqueue(() => this.#repository.setActive(id));
-    this.#activeProjectId = id;
-    this.#publish([id]);
-    this.#notifyStatus('saved');
-    return this.snapshot();
+    this.#assertCommandAuthority(commandAuthorityEpoch, id);
+    const expectedRevision = this.#revisionOf(id);
+    try {
+      await this.#enqueue(() => this.#repository.setActive(id, expectedRevision));
+      this.#activeProjectId = id;
+      this.#publish([id]);
+      this.#notifyStatus('saved');
+      return this.snapshot();
+    } catch (cause) {
+      if (cause instanceof ProjectConflictError) {
+        await this.#refreshFromRepository();
+        this.#notifyStatus('conflict');
+      }
+      throw cause;
+    }
   }
 
   async deleteActive(): Promise<WorkspaceSnapshot> {
+    const acceptedProjectId = this.snapshot().activeProject.id;
+    const commandAuthorityEpoch = this.#repositoryAuthorityEpoch;
     await this.flush();
-    const deleting = this.snapshot().activeProject;
+    this.#assertCommandAuthority(commandAuthorityEpoch, acceptedProjectId);
+    const deleting = this.#projects.find((project) => project.id === acceptedProjectId);
+    if (!deleting || this.#activeProjectId !== acceptedProjectId) {
+      throw new ProjectConflictError('The active project changed before deletion', deleting ?? null);
+    }
+    const expectedDeletingRevision = this.#revisionOf(deleting.id);
     const remaining = this.#projects.filter((project) => project.id !== deleting.id);
     const existing = remaining[0] ?? null;
     const replacement = existing ? null : this.#newProject(DEFAULT_DESIGN, 'Untitled design');
@@ -220,7 +285,7 @@ export class WorkspaceController {
     try {
       const persistedReplacement = await this.#enqueue(() => this.#repository.deleteAndActivate(
         deleting.id,
-        this.#revisionOf(deleting.id),
+        expectedDeletingRevision,
         active.id,
         replacement,
       ));
@@ -243,17 +308,23 @@ export class WorkspaceController {
   }
 
   async toggleStar(id: string): Promise<WorkspaceSnapshot> {
+    if (!this.#projects.some((project) => project.id === id)) {
+      throw new Error(`Project ${id} does not exist`);
+    }
+    const commandAuthorityEpoch = this.#repositoryAuthorityEpoch;
     await this.flush();
+    this.#assertCommandAuthority(commandAuthorityEpoch, id);
     const project = this.#projects.find((candidate) => candidate.id === id);
     if (!project) throw new Error(`Project ${id} does not exist`);
     const updated: Project = {
       ...project,
       starredAt: project.starredAt === null ? this.#clock() : null,
     };
+    const expectedRevision = this.#revisionOf(id);
     try {
       const persisted = await this.#enqueue(() => this.#repository.save(updated, {
         activate: false,
-        expectedRevision: this.#revisionOf(id),
+        expectedRevision,
       }));
       this.#persistedRevisions.set(id, persisted.revision);
       this.#replace(persisted);
@@ -270,7 +341,12 @@ export class WorkspaceController {
   }
 
   async useAsTemplate(id: string): Promise<WorkspaceSnapshot> {
+    if (!this.#projects.some((project) => project.id === id)) {
+      throw new Error(`Project ${id} does not exist`);
+    }
+    const commandAuthorityEpoch = this.#repositoryAuthorityEpoch;
     await this.flush();
+    this.#assertCommandAuthority(commandAuthorityEpoch, id);
     const source = this.#projects.find((project) => project.id === id);
     if (!source) throw new Error(`Project ${id} does not exist`);
     const created = this.#newProject(source.design, `${source.name} copy`.slice(0, 80));
@@ -290,21 +366,30 @@ export class WorkspaceController {
     conflictProjectId: string,
     resolution: ProjectConflictResolution,
   ): Promise<WorkspaceSnapshot> {
+    const acceptedConflict = this.#projects.find((project) => project.id === conflictProjectId);
+    if (!acceptedConflict?.conflict) {
+      throw new Error(`Project ${conflictProjectId} is not an unresolved conflict`);
+    }
+    const acceptedSourceProjectId = acceptedConflict.conflict.sourceProjectId;
+    const commandAuthorityEpoch = this.#repositoryAuthorityEpoch;
     await this.flush();
+    this.#assertCommandAuthority(commandAuthorityEpoch, conflictProjectId);
     const conflictProject = this.#projects.find((project) => project.id === conflictProjectId);
     if (!conflictProject?.conflict) {
       throw new Error(`Project ${conflictProjectId} is not an unresolved conflict`);
     }
     const source = this.#projects.find(
-      (project) => project.id === conflictProject.conflict!.sourceProjectId,
+      (project) => project.id === acceptedSourceProjectId,
     );
     if (!source) throw new Error('The original project is no longer available');
+    const expectedConflictRevision = this.#revisionOf(conflictProjectId);
+    const expectedSourceRevision = this.#revisionOf(source.id);
     try {
       await this.#enqueue(() => this.#repository.resolveConflict({
         conflictProjectId,
-        expectedConflictRevision: this.#revisionOf(conflictProjectId),
+        expectedConflictRevision,
         sourceProjectId: source.id,
-        expectedSourceRevision: this.#revisionOf(source.id),
+        expectedSourceRevision,
         resolution,
         resolvedAt: this.#clock(),
       }));
@@ -423,6 +508,45 @@ export class WorkspaceController {
     this.#statusListeners.clear();
   }
 
+  async #completeLoad(): Promise<WorkspaceSnapshot> {
+    this.#loaded = true;
+    if (this.#remoteRefreshPending && !this.#pendingProject) {
+      this.#remoteRefreshPending = false;
+      await this.#enqueue(() => this.#refreshFromRepository());
+    }
+    return this.snapshot();
+  }
+
+  async #reconcileDurableConflict(): Promise<void> {
+    const reconciliation = this.#pendingConflictReconciliation;
+    if (!reconciliation) return;
+    const deferredLocalEdit = this.#pendingProject?.id === reconciliation.sourceProjectId
+      ? this.#pendingProject
+      : null;
+    const loaded = await this.#repository.load();
+    const durableCopy = loaded.projects.find(
+      (project) => project.id === reconciliation.conflictProjectId,
+    );
+    if (!durableCopy) {
+      throw new Error('The durable conflict copy could not be reloaded');
+    }
+    this.#adoptLoaded(loaded.projects, durableCopy.id, loaded.issues);
+    if (deferredLocalEdit) {
+      const rebased: Project = {
+        ...durableCopy,
+        name: deferredLocalEdit.name,
+        design: deferredLocalEdit.design,
+        updatedAt: Math.max(deferredLocalEdit.updatedAt, durableCopy.createdAt),
+      };
+      this.#replace(rebased);
+      this.#pendingProject = rebased;
+    }
+    this.#pendingConflictReconciliation = null;
+    this.#publish([reconciliation.sourceProjectId, reconciliation.conflictProjectId]);
+    this.#notifyWorkspace();
+    this.#notifyStatus(deferredLocalEdit ? 'saving' : 'conflict');
+  }
+
   #newProject(design: DesignDocument, name: string): Project {
     const now = this.#clock();
     return createProject({ id: this.#createId(), name, design, createdAt: now });
@@ -441,9 +565,18 @@ export class WorkspaceController {
     this.#publish([persisted.id]);
   }
 
-  async #preserveConflictCopy(stale: Project, conflict: ProjectConflictError): Promise<void> {
+  async #preserveConflictCopy(
+    stale: Project,
+    conflict: ProjectConflictError,
+    staleEditGeneration: number,
+  ): Promise<void> {
     const current = this.#projects.find((project) => project.id === stale.id) ?? stale;
-    if (this.#pendingProject?.id === stale.id) this.#pendingProject = null;
+    let retryGeneration = Math.max(staleEditGeneration, this.#latestEditGeneration);
+    if (this.#pendingProject?.id === stale.id) {
+      retryGeneration = this.#pendingEditGeneration;
+      this.#pendingProject = null;
+      this.#pendingEditGeneration = 0;
+    }
     const now = this.#clock();
     const sourceRevision = this.#revisionOf(stale.id);
     let copy = createProject({
@@ -460,33 +593,53 @@ export class WorkspaceController {
     });
     let latestSource = conflict.latestProject;
     let persistedCopy: Project | null = null;
-    for (let attempt = 0; latestSource && attempt < 3 && !persistedCopy; attempt += 1) {
-      try {
-        persistedCopy = await this.#repository.preserveConflict(copy, latestSource.revision);
-      } catch (cause) {
-        if (!(cause instanceof ProjectConflictError)) throw cause;
-        latestSource = cause.latestProject;
+    let editIsDurable = false;
+    try {
+      for (let attempt = 0; latestSource && attempt < 3 && !persistedCopy; attempt += 1) {
+        try {
+          persistedCopy = await this.#repository.preserveConflict(copy, latestSource.revision);
+          editIsDurable = true;
+        } catch (cause) {
+          if (!(cause instanceof ProjectConflictError)) throw cause;
+          latestSource = cause.latestProject;
+        }
       }
+      if (!persistedCopy) {
+        copy = { ...copy,
+          name: `${current.name.replace(/ \(conflict copy\)$/u, '')} (recovered copy)`.slice(0, 80),
+          conflict: null };
+        persistedCopy = await this.#repository.save(copy, {
+          activate: true,
+          expectedRevision: null,
+        });
+        editIsDurable = true;
+      }
+      this.#pendingConflictReconciliation = {
+        sourceProjectId: stale.id,
+        conflictProjectId: persistedCopy.id,
+      };
+      await this.#reconcileDurableConflict();
+    } catch (cause) {
+      if (!editIsDurable && !this.#pendingProject) {
+        this.#pendingProject = current;
+        this.#pendingEditGeneration = retryGeneration;
+        this.#latestEditGeneration = Math.max(this.#latestEditGeneration, retryGeneration);
+      }
+      throw cause;
     }
-    if (!persistedCopy) {
-      copy = { ...copy,
-        name: `${current.name.replace(/ \(conflict copy\)$/u, '')} (recovered copy)`.slice(0, 80),
-        conflict: null };
-      persistedCopy = await this.#repository.save(copy, {
-        activate: true,
-        expectedRevision: null,
-      });
-    }
-    const loaded = await this.#repository.load();
-    this.#adoptLoaded(loaded.projects, persistedCopy.id, loaded.issues);
-    this.#publish([stale.id, persistedCopy.id]);
-    this.#notifyWorkspace();
-    this.#notifyStatus('conflict');
   }
 
   async #onExternalChange(_change: WorkspaceChange): Promise<void> {
-    if (!this.#loaded || this.#disposed) return;
-    if (this.#pendingProject || this.#writesInFlight > 0) {
+    if (this.#disposed) return;
+    if (!this.#loaded) {
+      this.#remoteRefreshPending = true;
+      return;
+    }
+    if (
+      this.#pendingConflictReconciliation
+      || this.#pendingProject
+      || this.#writesInFlight > 0
+    ) {
       this.#remoteRefreshPending = true;
       return;
     }
@@ -495,7 +648,21 @@ export class WorkspaceController {
 
   async #refreshFromRepository(): Promise<void> {
     if (this.#disposed) return;
+    if (this.#pendingConflictReconciliation || this.#pendingProject) {
+      this.#remoteRefreshPending = true;
+      return;
+    }
+    const editGenerationBeforeLoad = this.#latestEditGeneration;
     const loaded = await this.#repository.load();
+    // An edit can begin after the external-change preflight but while load() is
+    // in flight. Never let that stale refresh replace an accepted local journal.
+    if (
+      this.#pendingProject
+      || this.#latestEditGeneration !== editGenerationBeforeLoad
+    ) {
+      this.#remoteRefreshPending = true;
+      return;
+    }
     const previousActive = this.#activeProjectId;
     const nextActive = loaded.projects.some((project) => project.id === loaded.activeProjectId)
       ? loaded.activeProjectId
@@ -512,6 +679,7 @@ export class WorkspaceController {
     activeProjectId: string | null,
     issues: readonly ProjectRecordIssue[],
   ): void {
+    this.#repositoryAuthorityEpoch += 1;
     this.#projects = byUpdatedAt(projects);
     this.#activeProjectId = activeProjectId;
     this.#issues = issues;
@@ -523,6 +691,16 @@ export class WorkspaceController {
     const revision = this.#persistedRevisions.get(id);
     if (revision === undefined) throw new Error(`Project ${id} has no persisted revision`);
     return revision;
+  }
+
+  #assertCommandAuthority(expectedEpoch: number, projectId: string): void {
+    if (expectedEpoch === this.#repositoryAuthorityEpoch) return;
+    const latest = this.#projects.find((project) => project.id === projectId) ?? null;
+    this.#notifyStatus('conflict');
+    throw new ProjectConflictError(
+      'The workspace changed before the command could be applied',
+      latest,
+    );
   }
 
   #replace(project: Project): void {
@@ -546,10 +724,17 @@ export class WorkspaceController {
         return await operation();
       } finally {
         this.#writesInFlight -= 1;
-        if (this.#writesInFlight === 0 && this.#remoteRefreshPending && !this.#pendingProject) {
+        if (
+          this.#loaded
+          && this.#writesInFlight === 0
+          && this.#remoteRefreshPending
+          && !this.#pendingConflictReconciliation
+          && !this.#pendingProject
+        ) {
           this.#remoteRefreshPending = false;
           this.#scheduler.defer(() => {
-            void this.#refreshFromRepository().catch(() => this.#notifyStatus('error'));
+            void this.#enqueue(() => this.#refreshFromRepository())
+              .catch(() => this.#notifyStatus('error'));
           });
         }
       }
@@ -560,7 +745,11 @@ export class WorkspaceController {
   }
 
   #publish(projectIds: readonly string[]): void {
-    this.#sync?.publish({ projectIds });
+    try {
+      this.#sync?.publish({ projectIds });
+    } catch {
+      // Invalidations are advisory; repository revision checks remain authoritative.
+    }
   }
 
   #notifyStatus(status: WorkspacePersistenceStatus): void {

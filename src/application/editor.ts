@@ -14,6 +14,7 @@ import {
   type StrokeLayer,
   type Transform,
 } from '../domain/design';
+import { DESIGN_CAPACITY, hasDesignCapacity } from '../domain/designCapacity';
 import type { EmojiAssetRef } from '../domain/emoji';
 
 export const EXPORT_SIZES = [48, 128, 256] as const;
@@ -110,16 +111,32 @@ function recordDesign(
   };
 }
 
+function recordCapacityChangingDesign(
+  state: EditorState,
+  design: DesignDocument,
+  historyGroup?: string,
+): EditorState {
+  return hasDesignCapacity(design) ? recordDesign(state, design, historyGroup) : state;
+}
+
+function preservesOrReducesStrokeData(current: SceneLayer, replacement: SceneLayer): boolean {
+  if (current.mask !== replacement.mask) return false;
+  if (replacement.kind !== 'strokes') return true;
+  return current.kind === 'strokes' && current.strokes === replacement.strokes;
+}
+
 export const canUndo = (state: EditorState): boolean => state.past.length > 0;
 export const canRedo = (state: EditorState): boolean => state.future.length > 0;
 
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case 'load-design':
-      return { ...state, design: action.design, past: [], future: [], historyGroup: null,
-        selectedLayerIds: [action.design.layers.at(-1)!.id] };
+      return hasDesignCapacity(action.design)
+        ? { ...state, design: action.design, past: [], future: [], historyGroup: null,
+            selectedLayerIds: [action.design.layers.at(-1)!.id] }
+        : state;
     case 'replace-design':
-      return recordDesign(state, action.design, action.historyGroup);
+      return recordCapacityChangingDesign(state, action.design, action.historyGroup);
     case 'set-source':
       return recordDesign(
         state,
@@ -176,7 +193,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'paint-stroke': {
       const existing = getLayer(state.design, action.layerId);
       if (existing?.kind === 'strokes') {
-        return recordDesign(
+        return recordCapacityChangingDesign(
           state,
           replaceLayer(state.design, {
             ...existing,
@@ -185,7 +202,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           }),
         );
       }
-      if (existing || !action.createLayerName || state.design.layers.length >= 100) return state;
+      if (existing || !action.createLayerName
+          || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
       const layer: StrokeLayer = {
         id: action.layerId,
         kind: 'strokes',
@@ -196,24 +214,24 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         strokes: [action.stroke],
         mask: [],
       };
+      const design = { ...state.design, layers: [...state.design.layers, layer] };
+      if (!hasDesignCapacity(design)) return state;
       return {
-        ...recordDesign(state, {
-          ...state.design,
-          layers: [...state.design.layers, layer],
-        }),
+        ...recordDesign(state, design),
         selectedLayerIds: [layer.id],
       };
     }
     case 'mask-stroke': {
       const layer = getLayer(state.design, action.layerId);
       if (!layer) return state;
-      return recordDesign(
+      return recordCapacityChangingDesign(
         state,
         replaceLayer(state.design, { ...layer, mask: [...layer.mask, action.stroke] }),
       );
     }
     case 'add-stroke-layer': {
-      if (getLayer(state.design, action.layerId) || state.design.layers.length >= 100) return state;
+      if (getLayer(state.design, action.layerId)
+          || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
       const layer: StrokeLayer = {
         id: action.layerId,
         kind: 'strokes',
@@ -230,23 +248,32 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     }
     case 'add-layer': {
-      if (getLayer(state.design, action.layer.id) || state.design.layers.length >= 100) return state;
+      if (getLayer(state.design, action.layer.id)
+          || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
+      const design = { ...state.design, layers: [...state.design.layers, action.layer] };
+      if (!hasDesignCapacity(design)) return state;
       return {
-        ...recordDesign(state, { ...state.design, layers: [...state.design.layers, action.layer] }),
+        ...recordDesign(state, design),
         selectedLayerIds: [action.layer.id],
       };
     }
     case 'insert-layers': {
-      if (action.layers.length === 0 || state.design.layers.length + action.layers.length > 100) return state;
+      if (action.layers.length === 0
+          || state.design.layers.length + action.layers.length > DESIGN_CAPACITY.layers) return state;
       const existing = new Set(state.design.layers.map((layer) => layer.id));
       if (action.layers.some((layer) => !layer.id || existing.has(layer.id))) return state;
-      return { ...recordDesign(state, { ...state.design, layers: [...state.design.layers, ...action.layers] }),
-        selectedLayerIds: action.layers.map((layer) => layer.id) };
+      const design = { ...state.design, layers: [...state.design.layers, ...action.layers] };
+      if (!hasDesignCapacity(design)) return state;
+      return { ...recordDesign(state, design), selectedLayerIds: action.layers.map((layer) => layer.id) };
     }
-    case 'update-layer':
-      return getLayer(state.design, action.layer.id)
-        ? recordDesign(state, replaceLayer(state.design, action.layer), action.historyGroup)
-        : state;
+    case 'update-layer': {
+      const current = getLayer(state.design, action.layer.id);
+      if (!current) return state;
+      const design = replaceLayer(state.design, action.layer);
+      return preservesOrReducesStrokeData(current, action.layer)
+        ? recordDesign(state, design, action.historyGroup)
+        : recordCapacityChangingDesign(state, design, action.historyGroup);
+    }
     case 'rename-layer': {
       const layer = getLayer(state.design, action.layerId);
       const name = action.name.trim();
@@ -265,20 +292,24 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'duplicate-layer': {
       const layer = getLayer(state.design, action.layerId);
-      if (!layer || getLayer(state.design, action.duplicateId) || state.design.layers.length >= 100) {
+      if (!layer || getLayer(state.design, action.duplicateId)
+          || state.design.layers.length >= DESIGN_CAPACITY.layers) {
         return state;
       }
       const index = state.design.layers.findIndex((candidate) => candidate.id === layer.id);
       const duplicate = { ...layer, id: action.duplicateId, name: action.name };
       const layers = [...state.design.layers];
       layers.splice(index + 1, 0, duplicate);
+      const design = { ...state.design, layers };
+      if (!hasDesignCapacity(design)) return state;
       return {
-        ...recordDesign(state, { ...state.design, layers }),
+        ...recordDesign(state, design),
         selectedLayerIds: [duplicate.id],
       };
     }
     case 'duplicate-layers': {
-      if (action.layerIds.length !== action.duplicateIds.length || state.design.layers.length + action.layerIds.length > 100) return state;
+      if (action.layerIds.length !== action.duplicateIds.length
+          || state.design.layers.length + action.layerIds.length > DESIGN_CAPACITY.layers) return state;
       const offset = action.offset ?? 0.035;
       const copies = action.layerIds.map((id, index) => {
         const layer = getLayer(state.design, id);
@@ -292,7 +323,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       });
       if (copies.some((copy) => copy === null)) return state;
       const next = copies as SceneLayer[];
-      return { ...recordDesign(state, { ...state.design, layers: [...state.design.layers, ...next] }),
+      const design = { ...state.design, layers: [...state.design.layers, ...next] };
+      if (!hasDesignCapacity(design)) return state;
+      return { ...recordDesign(state, design),
         selectedLayerIds: next.map((copy) => copy.id) };
     }
     case 'select-layer': {

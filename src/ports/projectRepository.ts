@@ -49,7 +49,7 @@ export interface ProjectRepository {
   readQuarantinedRecord(expected: ProjectQuarantineRecord): Promise<ProjectQuarantineRecord>;
   purgeQuarantinedRecord(expected: ProjectQuarantineRecord): Promise<void>;
   preserveConflict(project: Project, expectedSourceRevision: number): Promise<Project>;
-  setActive(id: string): Promise<void>;
+  setActive(id: string, expectedRevision: number): Promise<void>;
   deleteAndActivate(
     id: string,
     expectedRevision: number,

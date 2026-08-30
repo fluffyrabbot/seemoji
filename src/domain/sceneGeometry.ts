@@ -1,5 +1,10 @@
-import type { LayerBounds, SceneLayer, Transform } from './design';
-import { createLayerMatrix } from './renderPlan';
+import type { LayerBounds, SceneLayer } from './design';
+import {
+  createEmojiRenderPlan,
+  createLayerMatrix,
+  toTopLeftOrigin,
+  type AffineMatrix,
+} from './renderPlan';
 
 export interface WorldBounds {
   readonly left: number;
@@ -11,6 +16,7 @@ export interface WorldBounds {
 export interface WorldPoint { readonly x: number; readonly y: number }
 
 const DEFAULT_BOUNDS: LayerBounds = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
+const EMOJI_GEOMETRY_PLAN_SIZE = 1024;
 
 export function layerLocalBounds(layer: SceneLayer): LayerBounds {
   if (layer.kind === 'shape' || layer.kind === 'text') return layer.bounds;
@@ -51,23 +57,70 @@ export function layerLocalBounds(layer: SceneLayer): LayerBounds {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-export function transformLayerPoint(transform: Transform, point: WorldPoint): WorldPoint {
-  const matrix = createLayerMatrix(transform, 1);
-  const x = point.x - 0.5;
-  const y = point.y - 0.5;
+export function transformPoint(matrix: AffineMatrix, point: WorldPoint): WorldPoint {
   return {
-    x: matrix.a * x + matrix.c * y + matrix.e,
-    y: matrix.b * x + matrix.d * y + matrix.f,
+    x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+    y: matrix.b * point.x + matrix.d * point.y + matrix.f,
   };
+}
+
+export function invertMatrix(matrix: AffineMatrix): AffineMatrix | null {
+  const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+  const determinantScale = Math.max(
+    1,
+    Math.abs(matrix.a * matrix.d),
+    Math.abs(matrix.b * matrix.c),
+  );
+  if (!Number.isFinite(determinant) || Math.abs(determinant) <= determinantScale * 1e-12) {
+    return null;
+  }
+  const a = matrix.d / determinant;
+  const b = -matrix.b / determinant;
+  const c = -matrix.c / determinant;
+  const d = matrix.a / determinant;
+  return {
+    a,
+    b,
+    c,
+    d,
+    e: -(a * matrix.e + c * matrix.f),
+    f: -(b * matrix.e + d * matrix.f),
+  };
+}
+
+/** Maps normalized layer-local points directly into normalized canvas/world points. */
+export function layerLocalToWorldMatrix(layer: SceneLayer): AffineMatrix {
+  let centered: AffineMatrix;
+  if (layer.kind === 'emoji') {
+    const matrix = createEmojiRenderPlan(layer, EMOJI_GEOMETRY_PLAN_SIZE).matrix;
+    centered = {
+      ...matrix,
+      e: matrix.e / EMOJI_GEOMETRY_PLAN_SIZE,
+      f: matrix.f / EMOJI_GEOMETRY_PLAN_SIZE,
+    };
+  } else {
+    centered = createLayerMatrix(layer.transform, 1);
+  }
+  return toTopLeftOrigin(centered, 1);
+}
+
+export function layerLocalPointToWorld(layer: SceneLayer, point: WorldPoint): WorldPoint {
+  return transformPoint(layerLocalToWorldMatrix(layer), point);
+}
+
+/** Returns null when the layer's affine transform collapses onto a line. */
+export function worldPointToLayerLocal(layer: SceneLayer, point: WorldPoint): WorldPoint | null {
+  const inverse = invertMatrix(layerLocalToWorldMatrix(layer));
+  return inverse ? transformPoint(inverse, point) : null;
 }
 
 export function layerWorldCorners(layer: SceneLayer): readonly WorldPoint[] {
   const { x, y, width, height } = layerLocalBounds(layer);
   return [
-    transformLayerPoint(layer.transform, { x, y }),
-    transformLayerPoint(layer.transform, { x: x + width, y }),
-    transformLayerPoint(layer.transform, { x: x + width, y: y + height }),
-    transformLayerPoint(layer.transform, { x, y: y + height }),
+    layerLocalPointToWorld(layer, { x, y }),
+    layerLocalPointToWorld(layer, { x: x + width, y }),
+    layerLocalPointToWorld(layer, { x: x + width, y: y + height }),
+    layerLocalPointToWorld(layer, { x, y: y + height }),
   ];
 }
 

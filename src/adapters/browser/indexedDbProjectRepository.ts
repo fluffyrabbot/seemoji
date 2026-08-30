@@ -355,15 +355,33 @@ export class IndexedDbProjectRepository implements ProjectRepository {
     return persisted;
   }
 
-  async setActive(id: string): Promise<void> {
+  async setActive(id: string, expectedRevision: number): Promise<void> {
     if (!id) throw new ProjectRepositoryError('Active project id is invalid', 'write-failed');
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+      throw new ProjectRepositoryError('Active project revision is invalid', 'write-failed');
+    }
     const database = await this.#open();
+    let conflict: ProjectConflictError | null = null;
     try {
-      const transaction = database.transaction(WORKSPACE_STORE, 'readwrite');
+      const transaction = database.transaction([PROJECTS_STORE, WORKSPACE_STORE], 'readwrite');
       const completed = transactionDone(transaction);
-      transaction.objectStore(WORKSPACE_STORE).put({ key: ACTIVE_PROJECT_KEY, value: id });
+      const projectRequest = transaction.objectStore(PROJECTS_STORE).get(id);
+      projectRequest.addEventListener('success', () => {
+        const decoded = decodeProject(projectRequest.result);
+        const latest = decoded.ok ? decoded.value : null;
+        if (latest?.revision !== expectedRevision) {
+          conflict = new ProjectConflictError(
+            'The project changed before it could be activated',
+            latest,
+          );
+          transaction.abort();
+          return;
+        }
+        transaction.objectStore(WORKSPACE_STORE).put({ key: ACTIVE_PROJECT_KEY, value: id });
+      }, { once: true });
       await completed;
     } catch (cause) {
+      if (conflict) throw conflict;
       throw new ProjectRepositoryError('The active project could not be updated', 'write-failed', { cause });
     }
   }
@@ -377,11 +395,20 @@ export class IndexedDbProjectRepository implements ProjectRepository {
     if (!id || !activeProjectId) {
       throw new ProjectRepositoryError('Project deletion identity is invalid', 'write-failed');
     }
+    if (!replacement && activeProjectId === id) {
+      throw new ProjectRepositoryError('Project deletion requires a surviving active project', 'write-failed');
+    }
     if (replacement) {
       const decoded = decodeProject(replacement);
       if (!decoded.ok) throw new ProjectRepositoryError(decoded.error, 'write-failed');
       if (decoded.value.revision !== 0) {
         throw new ProjectRepositoryError('Replacement project must be new', 'write-failed');
+      }
+      if (decoded.value.id !== activeProjectId) {
+        throw new ProjectRepositoryError(
+          'Replacement project must match the requested active project',
+          'write-failed',
+        );
       }
     }
     const database = await this.#open();
@@ -408,6 +435,29 @@ export class IndexedDbProjectRepository implements ProjectRepository {
           conflict = new ProjectConflictError(
             `Project ${id} has an unresolved conflict`,
             latest,
+          );
+          transaction.abort();
+          return;
+        }
+        const activeRecord = records.find((record) => record.ok
+          && record.value.id === activeProjectId);
+        const activeIdentityOccupied = allRequest.result.some((raw) =>
+          typeof raw === 'object'
+          && raw !== null
+          && 'id' in raw
+          && raw.id === activeProjectId);
+        if (!replacement && !activeRecord?.ok) {
+          conflict = new ProjectConflictError(
+            `Active project ${activeProjectId} no longer exists`,
+            null,
+          );
+          transaction.abort();
+          return;
+        }
+        if (replacement && activeIdentityOccupied) {
+          conflict = new ProjectConflictError(
+            `Replacement project ${activeProjectId} already exists`,
+            activeRecord?.ok ? activeRecord.value : null,
           );
           transaction.abort();
           return;

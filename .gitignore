@@ -12,6 +12,8 @@ dist
 dist-ssr
 .wrangler
 .dev.vars*
+.env*
+!.env.example
 *.local
 playwright-report
 test-results

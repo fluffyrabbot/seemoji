@@ -18,6 +18,7 @@ import {
   type TextLayer,
   type Transform,
 } from './design';
+import { DESIGN_CAPACITY } from './designCapacity';
 import { toCodepoint, type EmojiAssetRef } from './emoji';
 
 export type DecodeResult<T> =
@@ -228,8 +229,9 @@ function decodeStrokePoint(value: unknown, path: string): DecodeResult<StrokePoi
 }
 
 function decodeStrokePoints(value: unknown, path: string): DecodeResult<readonly StrokePoint[]> {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 50_000) {
-    return { ok: false, error: `${path} must contain between 1 and 50000 points` };
+  if (!Array.isArray(value) || value.length === 0
+      || value.length > DESIGN_CAPACITY.pointsPerStroke) {
+    return { ok: false, error: `${path} must contain between 1 and ${DESIGN_CAPACITY.pointsPerStroke} points` };
   }
   const points: StrokePoint[] = [];
   for (const [index, rawPoint] of value.entries()) {
@@ -289,8 +291,8 @@ function decodeBrushStroke(value: unknown, path: string): DecodeResult<BrushStro
 
 function decodeMask(value: unknown, path: string): DecodeResult<readonly MaskStroke[]> {
   if (value === undefined) return { ok: true, value: [] };
-  if (!Array.isArray(value) || value.length > 10_000) {
-    return { ok: false, error: `${path} must be an array with at most 10000 strokes` };
+  if (!Array.isArray(value) || value.length > DESIGN_CAPACITY.strokesPerCollection) {
+    return { ok: false, error: `${path} must be an array with at most ${DESIGN_CAPACITY.strokesPerCollection} strokes` };
   }
   const mask: MaskStroke[] = [];
   for (const [index, rawStroke] of value.entries()) {
@@ -360,8 +362,9 @@ function decodeStrokeLayer(value: unknown, index: number): DecodeResult<StrokeLa
     ? { ok: true as const, value: DEFAULT_TRANSFORM }
     : decodeTransform(layer.transform, `${path}.transform`);
   if (!transform.ok) return transform;
-  if (!Array.isArray(layer.strokes) || layer.strokes.length > 10_000) {
-    return { ok: false, error: `${path}.strokes must contain at most 10000 strokes` };
+  if (!Array.isArray(layer.strokes)
+      || layer.strokes.length > DESIGN_CAPACITY.strokesPerCollection) {
+    return { ok: false, error: `${path}.strokes must contain at most ${DESIGN_CAPACITY.strokesPerCollection} strokes` };
   }
   const strokes: BrushStroke[] = [];
   for (const [index, rawStroke] of layer.strokes.entries()) {
@@ -501,8 +504,9 @@ function decodeDesignDocumentV2(document: Record<string, unknown>): DecodeResult
   if (!canvas || canvas.background !== 'transparent') {
     return { ok: false, error: 'canvas.background must be "transparent"' };
   }
-  if (!Array.isArray(document.layers) || document.layers.length === 0 || document.layers.length > 100) {
-    return { ok: false, error: 'layers must contain between 1 and 100 layers' };
+  if (!Array.isArray(document.layers) || document.layers.length === 0
+      || document.layers.length > DESIGN_CAPACITY.layers) {
+    return { ok: false, error: `layers must contain between 1 and ${DESIGN_CAPACITY.layers} layers` };
   }
   const layers: SceneLayer[] = [];
   const ids = new Set<string>();
@@ -539,8 +543,8 @@ function decodeDesignDocumentV2(document: Record<string, unknown>): DecodeResult
       : 0;
     return sceneTotal + maskPoints + paintPoints;
   }, 0);
-  if (totalPoints > 250_000) {
-    return { ok: false, error: 'scene must contain at most 250000 stroke points' };
+  if (totalPoints > DESIGN_CAPACITY.pointsPerDocument) {
+    return { ok: false, error: `scene must contain at most ${DESIGN_CAPACITY.pointsPerDocument} stroke points` };
   }
   if (!layers.some((layer) => layer.kind === 'emoji')) {
     return { ok: false, error: 'scene must contain an emoji layer' };

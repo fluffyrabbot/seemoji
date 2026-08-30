@@ -137,8 +137,35 @@ describe('IndexedDbProjectRepository', () => {
       projects: [{ id: 'new' }, { id: 'old' }],
       issues: [],
     });
-    await repository.setActive('new');
+    await repository.setActive('new', 1);
     expect((await repository.load()).activeProjectId).toBe('new');
+    repository.close();
+  });
+
+  it('activates only the exact project revision validated by the caller', async () => {
+    const repository = new IndexedDbProjectRepository(new IDBFactory(), 'project-active-cas');
+    await repository.save(project('old', 2), { activate: true, expectedRevision: null });
+    const candidate = await repository.save(project('new', 3), {
+      activate: false,
+      expectedRevision: null,
+    });
+    const changed = await repository.save({ ...candidate, name: 'Changed remotely' }, {
+      activate: false,
+      expectedRevision: candidate.revision,
+    });
+
+    await expect(repository.setActive(candidate.id, candidate.revision)).rejects.toMatchObject({
+      name: 'ProjectConflictError',
+      latestProject: { id: candidate.id, revision: changed.revision, name: 'Changed remotely' },
+    });
+    await expect(repository.setActive('missing', 1)).rejects.toMatchObject({
+      name: 'ProjectConflictError',
+      latestProject: null,
+    });
+    expect((await repository.load()).activeProjectId).toBe('old');
+
+    await repository.setActive(changed.id, changed.revision);
+    expect((await repository.load()).activeProjectId).toBe(changed.id);
     repository.close();
   });
 
@@ -154,6 +181,86 @@ describe('IndexedDbProjectRepository', () => {
     const loaded = await repository.load();
     expect(loaded.projects.map(({ id }) => id)).toEqual(['replacement']);
     expect(loaded.activeProjectId).toBe('replacement');
+    repository.close();
+  });
+
+  it('does not delete the source when its requested survivor was concurrently removed', async () => {
+    const repository = new IndexedDbProjectRepository(new IDBFactory(), 'project-delete-survivor-cas');
+    const first = await repository.save(project('first', 2), {
+      activate: true,
+      expectedRevision: null,
+    });
+    const second = await repository.save(project('second', 3), {
+      activate: false,
+      expectedRevision: null,
+    });
+    await repository.deleteAndActivate(second.id, second.revision, first.id, null);
+
+    await expect(
+      repository.deleteAndActivate(first.id, first.revision, second.id, null),
+    ).rejects.toBeInstanceOf(ProjectConflictError);
+    await expect(repository.load()).resolves.toMatchObject({
+      activeProjectId: first.id,
+      projects: [{ id: first.id, revision: first.revision }],
+    });
+    repository.close();
+  });
+
+  it('requires a replacement to own a new matching active identity', async () => {
+    const repository = new IndexedDbProjectRepository(new IDBFactory(), 'project-delete-replacement-cas');
+    const first = await repository.save(project('first', 2), {
+      activate: true,
+      expectedRevision: null,
+    });
+    const existing = await repository.save(project('existing', 3), {
+      activate: false,
+      expectedRevision: null,
+    });
+    await expect(repository.deleteAndActivate(
+      first.id,
+      first.revision,
+      'different',
+      project('replacement', 4),
+    )).rejects.toMatchObject({ kind: 'write-failed' });
+    await expect(repository.deleteAndActivate(
+      first.id,
+      first.revision,
+      existing.id,
+      project(existing.id, 4),
+    )).rejects.toBeInstanceOf(ProjectConflictError);
+    expect((await repository.load()).projects.map(({ id }) => id).sort())
+      .toEqual(['existing', 'first']);
+    repository.close();
+  });
+
+  it('does not overwrite a quarantined raw record at a replacement identity', async () => {
+    const factory = new IDBFactory();
+    const databaseName = 'project-delete-corrupt-replacement';
+    const repository = new IndexedDbProjectRepository(factory, databaseName);
+    const source = await repository.save(project('source', 2), {
+      activate: true,
+      expectedRevision: null,
+    });
+    const database = await openFixture(factory, databaseName, 2, () => undefined);
+    const transaction = database.transaction('projects', 'readwrite');
+    transaction.objectStore('projects').put({ id: 'replacement', schemaVersion: 2 });
+    await new Promise<void>((resolve, reject) => {
+      transaction.addEventListener('complete', () => resolve(), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+    database.close();
+
+    await expect(repository.deleteAndActivate(
+      source.id,
+      source.revision,
+      'replacement',
+      project('replacement', 3),
+    )).rejects.toBeInstanceOf(ProjectConflictError);
+    await expect(repository.load()).resolves.toMatchObject({
+      activeProjectId: source.id,
+      projects: [{ id: source.id }],
+      issues: [{ recordId: 'replacement' }],
+    });
     repository.close();
   });
 

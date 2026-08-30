@@ -31,9 +31,9 @@ The hexagonal layout in `README.md` is still the right map:
 UI event
    │
    ▼
-editorReducer ─► WorkspaceController ─► ProjectRepository
-                         │
-                         └─────────────► WorkspaceSync
+EditorWorkspaceStore ─► WorkspaceController ─► ProjectRepository
+       │                         │
+       └─ editorReducer          └─────────────► WorkspaceSync
    │
    ▼
 DesignDocumentV2
@@ -55,7 +55,7 @@ Relevant facts in the tree today:
 | Port | `src/ports/emojiAssetSource.ts` | `load(ref) → Promise<CanvasImageSource>`. |
 | Adapter | `src/adapters/browser/twemojiAssetSource.ts` | jsDelivr `.../jdecked/twemoji@{ver}/assets/svg/{codepoint}.svg`. CORS, content-type `svg`, blob-URL decode, `URL.revokeObjectURL` in `finally`, in-memory promise cache. Canvas never points `src` at the CDN. |
 | Coordinator | `src/application/renderCoordinator.ts` | `validateSource` is `load()`. Frame/PNG LRU keys are `JSON.stringify(design)`. Pack-agnostic. |
-| Editor | `src/application/editor.ts` | `EditorState` owns the active V2 design, selection, export size, and bounded history. `set-source` updates the primary emoji layer. `load-design` opens a project and resets history. |
+| Editor | `src/application/editorWorkspaceStore.ts`, `src/application/editor.ts` | `EditorWorkspaceStore` synchronously journals every accepted design/name mutation before notifying React. `EditorState` owns the active V2 design, selection, export size, and bounded history. `set-source` updates the primary emoji layer. `load-design` opens a project and resets history. |
 | Composition | `src/main.tsx` | Wires `TwemojiCdnAssetSource` + `BrowserCanvasRenderer`. |
 | Picker | `src/ui/EmojiPicker.tsx` | 90 curated graphemes as **system-font text**. Paste uses `firstGrapheme`. |
 | Selection | `src/ui/App.tsx` `selectEmoji` | `createEmojiAssetRef` then `renderer.validateSource` then `set-source`. |
@@ -69,12 +69,13 @@ Relevant facts in the tree today:
 | Renderer | `src/adapters/browser/canvasRenderer.ts` | `drawImage(asset, …)` + filters + outline. Pack-agnostic. |
 | Boundaries | `src/architecture.test.ts` | domain / ports / application / `adapters/browser` must not import React, Preact, or `src/ui`. UI (`App.tsx`, `EmojiPicker.tsx`, `Preview.tsx`) imports application + domain only, not adapters. |
 | Hosting | `docs/deployment.md` | Static Cloudflare Pages. No Functions, KV, R2, or server. |
-| JS budget | `scripts/check-bundle-budget.mjs` | **128,000 raw / 40,000 gzip-9** across **all** emitted `.js` chunks. |
+| JS budget | `scripts/check-bundle-budget.mjs` | **144,000 raw / 45,000 gzip-9** across **all** emitted `.js` chunks. |
 | e2e | `e2e/editor.spec.ts` | Playwright serves `dist/`, intercepts artwork, and includes two-tab project concurrency. Copy-reject text contains `No Twemoji`. `@visual` is Chromium-only. |
 | Layout | `src/index.css` | Narrow overflow invariant: 620px two-column, 390×844 stacked with no horizontal overflow. Picker grid becomes 8 columns at 620px. |
 
-Measured production JS after workspace recovery (2026-08-29): approximately
-**121,400 raw / 37,600 gzip-9**. Glyph manifests and artwork remain outside the
+Measured production JS after synchronous workspace journaling, capacity enforcement,
+and affine-local masks (2026-08-29): approximately **133,000 raw / 41,000 gzip-9**.
+Glyph manifests and artwork remain outside the
 JavaScript graph; see [JS budget](#js-budget).
 
 ### Pain points
@@ -537,7 +538,7 @@ export interface AppServices {
   readonly renderer: RenderCoordinator;
   readonly clipboard: ClipboardPort;
   readonly fileExport: FileExportPort;
-  readonly workspace: WorkspaceController;
+  readonly workspace: EditorWorkspaceStore;
   readonly catalog: EmojiPackCatalog;
   readonly packPreference: PackPreferenceStore;
 }
@@ -551,7 +552,7 @@ export interface AppServices {
 
 On load:
 
-1. `WorkspaceController.load()` opens or creates the canonical active project. Editing remains gated until its strictly decoded design is available.
+1. `EditorWorkspaceStore.load()` opens or creates the canonical active project through `WorkspaceController`. Editing remains gated until its strictly decoded design is available.
 2. In parallel, `get({ pack: 'twemoji', packVersion: '15.1.0' })` via the unstyled path. When the default coverage batch settles, omit uncovered curated cells. If it fails, keep full `CURATED`.
 3. `catalog.list()`. On failure: notice, hardcoded footer, hidden selector. Do **not** clear the picker; default coverage remains usable.
 4. `packPreference.read()`, then resolve against the list using the fail-open table.
@@ -1130,9 +1131,9 @@ PR 4, before the first non-Twemoji project can exist.
 
 ### JS budget
 
-Current baseline: `scripts/check-bundle-budget.mjs` is **128,000 raw / 40,000
-gzip-9** across all `dist/**/*.js`; the workspace-recovery build is approximately
-**121,400 / 37,600**.
+Current baseline: `scripts/check-bundle-budget.mjs` is **144,000 raw / 45,000
+gzip-9** across all `dist/**/*.js`; the synchronous-journal, capacity, and
+affine-mask build is approximately **133,000 / 41,000**.
 
 Replacing `TwemojiCdnAssetSource` with `CanonicalPackSource` can be size-neutral. Catalog client + preference + remap + packSession + selects + `<img>` grid + licenses dialog will exceed the remaining baseline headroom.
 
@@ -1227,7 +1228,7 @@ None remaining for implementation. Product choices that were previously listed h
 12. **Remap is explicit and fail-visible.** Same grapheme; coverage check; on miss keep old `source` and notice. Style and version changes reuse `remapSource`.
 13. **Coverage is manifest data.** `hasGlyph` never throws. Uncovered curated cells are omitted **after** the first `hasGlyph` batch; first paint keeps full `CURATED`. Omitted-style `get()` tries the unstyled manifest path first (no `list()` required). Catalog index failure must not zero the picker if that default-pack manifest loaded. OpenMoji extras/PUA are not ingested.
 14. **User-facing missing-art copy** is `No ${PackSummary.name} ${packVersion} artwork exists for ${grapheme}` (`No Twemoji 15.1.0 artwork exists for A`).
-15. **Glyphs stay out of the JS graph.** Expected +4–8 KB gzip for PRs 2–5, measured from the **128,000 raw / 40,000 gzip-9** workspace-recovery baseline.
+15. **Glyphs stay out of the JS graph.** Expected +4–8 KB gzip for PRs 2–5, measured from the **144,000 raw / 45,000 gzip-9** reliability baseline.
 16. **Picker shows pack art via `<img src={assetUrl}>`.** Canvas stays for edited preview and project thumbnails. Catch img and thumbnail failures.
 17. **Footer follows the design via `summaryFor` / `list()`,** never `get()` (no glyph download). Hardcoded Twemoji fallback until the index loads.
 18. **Share-alike honesty is a persistent Preview hint**, visible before click. The 4 s Copy toast is optional echo. BY packs: footer only. OpenMoji is listed; no extra confirm dialog.
@@ -1257,7 +1258,7 @@ None remaining for implementation. Product choices that were previously listed h
 - `src/main.tsx` — composition root
 - `src/ui/App.tsx`, `EmojiPicker.tsx`, `StarredProjectsBar.tsx`, `Preview.tsx`
 - `src/architecture.test.ts` — framework boundary
-- `scripts/check-bundle-budget.mjs` — 128,000 / 40,000 workspace-recovery baseline
+- `scripts/check-bundle-budget.mjs` — 144,000 / 45,000 reliability baseline
 - `e2e/editor.spec.ts` — jsDelivr intercept, `/41.svg` 404, `No Twemoji`
 - `README.md`, `docs/deployment.md`, `docs/ci-strategy.md`
 - [jdecked/twemoji](https://github.com/jdecked/twemoji), [googlefonts/noto-emoji](https://github.com/googlefonts/noto-emoji), [microsoft/fluentui-emoji](https://github.com/microsoft/fluentui-emoji), [hfg-gmuend/openmoji](https://github.com/hfg-gmuend/openmoji), [mozilla/fxemoji](https://github.com/mozilla/fxemoji), SerenityOS `Base/res/emoji`
@@ -1303,7 +1304,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - `src/ui/App.tsx` — boot sequence (**no** remap of `DEFAULT_DESIGN`); footer via `summaryFor` with hardcoded fallback
 - `src/ui/EmojiPicker.tsx` — first paint full `CURATED`; after `hasGlyph` batch, omit uncovered cells (still system-font). Unstyled `get()` does not wait on `list()`.
 - `e2e/editor.spec.ts` — paste `A` asserts `No Twemoji`; keep jsDelivr intercept **and** `/41.svg` 404
-- `scripts/check-bundle-budget.mjs` — measure against the 128,000 raw / 40,000 gzip-9 workspace-recovery baseline and raise only with an itemized architectural justification
+- `scripts/check-bundle-budget.mjs` — measure against the 144,000 raw / 45,000 gzip-9 reliability baseline and raise only with an itemized architectural justification
 
 **Depends on:** PR 1.
 

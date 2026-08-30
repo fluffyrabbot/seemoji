@@ -32,18 +32,19 @@ export default function WorkspaceMenu({ starred, storageHealth, busy, onSaveNow,
       <summary>Project menu</summary>
       <div className="workspace-menu-popover" aria-label="Project and workspace actions">
         <strong>Project</strong>
-        <button type="button" onClick={() => run(onToggleStar)}>
+        <button type="button" disabled={busy} onClick={() => run(onToggleStar)}>
           {starred ? '★ Remove from templates' : '☆ Add to templates'}
         </button>
-        <button type="button" onClick={() => run(onSaveNow)}>
+        <button type="button" disabled={busy} onClick={() => run(onSaveNow)}>
           <span>Save now</span><kbd>⌘S</kbd>
         </button>
-        <button type="button" onClick={() => run(onExportProject)}>Export editable project</button>
-        <button type="button" onClick={() => projectImportRef.current?.click()}>
+        <button type="button" disabled={busy} onClick={() => run(onExportProject)}>Export editable project</button>
+        <button type="button" disabled={busy} onClick={() => projectImportRef.current?.click()}>
           Import editable project
         </button>
-        <button type="button" className="danger" onClick={() => run(onDelete)}>Delete project…</button>
+        <button type="button" className="danger" disabled={busy} onClick={() => run(onDelete)}>Delete project…</button>
         <input ref={projectImportRef} className="sr-only" type="file" accept="application/json,.json"
+          disabled={busy}
           aria-label="Import editable project" onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) onImportProject(file);
@@ -60,6 +61,7 @@ export default function WorkspaceMenu({ starred, storageHealth, busy, onSaveNow,
           Restore workspace backup
         </button>
         <input ref={workspaceImportRef} className="sr-only" type="file" accept="application/json,.json"
+          disabled={busy}
           aria-label="Restore workspace backup" onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) onImportWorkspace(file);

@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   canRedo,
   canUndo,
-  editorReducer,
-  INITIAL_EDITOR_STATE,
+  type EditorAction,
 } from '../application/editor';
 import type { AppServices, StorageHealth } from '../application/services';
 import type {
@@ -42,16 +49,34 @@ interface Props {
   readonly services: AppServices;
 }
 
+const EMPTY_PROJECTS: readonly Project[] = [];
+const EMPTY_WORKSPACE_ISSUES: WorkspaceSnapshot['issues'] = [];
+
 export default function App({ services }: Props) {
-  const [editor, dispatch] = useReducer(editorReducer, INITIAL_EDITOR_STATE);
-  const [projects, setProjects] = useState<readonly Project[]>([]);
-  const [projectName, setProjectName] = useState('Untitled design');
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
-  const [workspaceIssues, setWorkspaceIssues] = useState<WorkspaceSnapshot['issues']>([]);
+  const subscribeToWorkspace = useCallback(
+    (listener: () => void) => services.workspace.subscribe(listener),
+    [services.workspace],
+  );
+  const readWorkspace = useCallback(
+    () => services.workspace.getSnapshot(),
+    [services.workspace],
+  );
+  const session = useSyncExternalStore(
+    subscribeToWorkspace,
+    readWorkspace,
+    readWorkspace,
+  );
+  const editor = session.editor;
+  const projects = session.workspace?.projects ?? EMPTY_PROJECTS;
+  const projectName = session.projectName;
+  const currentProjectId = session.workspace?.activeProject.id ?? null;
+  const workspaceIssues = session.workspace?.issues ?? EMPTY_WORKSPACE_ISSUES;
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [persistenceStatus, setPersistenceStatus] =
-    useState<'loading' | 'saved' | 'saving' | 'conflict' | 'error'>('loading');
+    useState<'loading' | 'saved' | 'saving' | 'reconciling' | 'conflict' | 'error'>('loading');
+  const workspaceBusy = session.workspaceMutationInProgress
+    || persistenceStatus === 'reconciling';
   const [selectionGroups, setSelectionGroups] = useState<readonly (readonly string[])[]>([]);
   const [proportionsLocked, setProportionsLocked] = useState(true);
   const [tool, setTool] = useState<EditorTool>('select');
@@ -74,8 +99,29 @@ export default function App({ services }: Props) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const layerClipboard = useRef<readonly SceneLayer[]>([]);
-  const workspaceReady = useRef(false);
   const conflictPanelRef = useRef<HTMLDivElement>(null);
+  const previousProjectId = useRef<string | null>(null);
+
+  const dispatch = useCallback((action: EditorAction) => {
+    if (!workspaceBusy) services.workspace.dispatch(action);
+  }, [services.workspace, workspaceBusy]);
+
+  const dispatchForEditorSession = useCallback((
+    expectedEpoch: number,
+    action: EditorAction,
+  ) => {
+    const current = services.workspace.getSnapshot();
+    if (
+      current.editorSessionEpoch === expectedEpoch
+      && services.workspace.acceptsEditorMutations
+    ) {
+      services.workspace.dispatch(action);
+    }
+  }, [services.workspace]);
+
+  const changeProjectName = useCallback((name: string) => {
+    if (!workspaceBusy) services.workspace.renameActive(name);
+  }, [services.workspace, workspaceBusy]);
 
   const showNotice = useCallback((next: Notice) => {
     window.clearTimeout(noticeTimer.current);
@@ -88,29 +134,44 @@ export default function App({ services }: Props) {
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
 
   useEffect(() => {
+    if (previousProjectId.current === currentProjectId) return;
+    previousProjectId.current = currentProjectId;
+    setSelectionGroups([]);
+    setTool('select');
+  }, [currentProjectId]);
+
+  useEffect(() => {
     let active = true;
+    let guardedStatus = services.workspace.persistenceStatus;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      void services.workspace.flush().catch(() => undefined);
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    const updateNavigationGuard = () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      if (
+        guardedStatus === 'saving'
+        || guardedStatus === 'reconciling'
+        || guardedStatus === 'error'
+        || services.workspace.getSnapshot().workspaceMutationInProgress
+      ) {
+        window.addEventListener('beforeunload', onBeforeUnload);
+      }
+    };
     const unsubscribe = services.workspace.subscribeStatus((status) => {
       if (!active) return;
+      guardedStatus = status;
       setPersistenceStatus(status);
+      // Status listeners run inside updateActive(), so the guard exists before
+      // another task can navigate away from a newly accepted edit.
+      updateNavigationGuard();
     });
-    const unsubscribeWorkspace = services.workspace.subscribeWorkspace((workspace) => {
-      if (!active) return;
-      setProjects(workspace.projects);
-      setProjectName(workspace.activeProject.name);
-      setCurrentProjectId(workspace.activeProject.id);
-      setWorkspaceIssues(workspace.issues);
-      dispatch({ type: 'load-design', design: workspace.activeProject.design });
-      setSelectionGroups([]);
-    });
+    const unsubscribeNavigationGuard = services.workspace.subscribe(updateNavigationGuard);
+    updateNavigationGuard();
     services.workspace.load()
       .then((workspace) => {
         if (!active) return;
-        setProjects(workspace.projects);
-        setProjectName(workspace.activeProject.name);
-        setCurrentProjectId(workspace.activeProject.id);
-        setWorkspaceIssues(workspace.issues);
-        dispatch({ type: 'load-design', design: workspace.activeProject.design });
-        workspaceReady.current = true;
         setPersistenceStatus('saved');
         if (workspace.issues.length > 0) {
           showNotice({
@@ -129,7 +190,8 @@ export default function App({ services }: Props) {
     return () => {
       active = false;
       unsubscribe();
-      unsubscribeWorkspace();
+      unsubscribeNavigationGuard();
+      window.removeEventListener('beforeunload', onBeforeUnload);
       services.workspace.dispose();
     };
   }, [services.workspace, showNotice]);
@@ -143,14 +205,6 @@ export default function App({ services }: Props) {
     });
     return () => { active = false; };
   }, [services.storageHealth]);
-
-  useEffect(() => {
-    if (!workspaceReady.current) return;
-    const active = services.workspace.snapshot().activeProject;
-    const name = projectName.trim() || 'Untitled design';
-    if (active.design === editor.design && active.name === name) return;
-    services.workspace.updateActive(name, editor.design);
-  }, [editor.design, projectName, services.workspace]);
 
   useEffect(() => {
     const flush = () => { void services.workspace.flush().catch(() => undefined); };
@@ -169,31 +223,44 @@ export default function App({ services }: Props) {
   }, [canvasSettings]);
 
   const selectEmoji = async (grapheme: string): Promise<boolean> => {
+    const requestedSession = services.workspace.getSnapshot();
+    const requestedProjectId = requestedSession.workspace?.activeProject.id;
+    const requestedEditorSessionEpoch = requestedSession.editorSessionEpoch;
+    if (
+      !requestedProjectId
+      || !services.workspace.acceptsEditorMutations
+    ) return false;
     const source = createEmojiAssetRef(grapheme);
     try {
       await services.renderer.validateSource(source);
-      dispatch({ type: 'set-source', source });
+      const currentSession = services.workspace.getSnapshot();
+      if (
+        !services.workspace.acceptsEditorMutations
+        || currentSession.workspace?.activeProject.id !== requestedProjectId
+        || currentSession.editorSessionEpoch !== requestedEditorSessionEpoch
+      ) {
+        return false;
+      }
+      services.workspace.dispatch({ type: 'set-source', source });
       return true;
     } catch (cause) {
+      const currentSession = services.workspace.getSnapshot();
+      if (
+        currentSession.workspace?.activeProject.id !== requestedProjectId
+        || currentSession.editorSessionEpoch !== requestedEditorSessionEpoch
+      ) return false;
       showNotice({ kind: 'error', message: String(cause) });
       return false;
     }
   };
 
-  const applyWorkspace = (workspace: WorkspaceSnapshot) => {
-    setProjects(workspace.projects);
-    setCurrentProjectId(workspace.activeProject.id);
-    setProjectName(workspace.activeProject.name);
-    setWorkspaceIssues(workspace.issues);
-    dispatch({ type: 'load-design', design: workspace.activeProject.design });
-    setSelectionGroups([]);
+  const applyWorkspace = (_workspace: WorkspaceSnapshot) => {
     setTool('select');
+    setSelectionGroups([]);
   };
 
   const saveNow = async () => {
     try {
-      const workspace = services.workspace.updateActive(projectName, editor.design);
-      setProjects(workspace.projects);
       await services.workspace.flush();
       if (services.workspace.persistenceStatus !== 'conflict') {
         showNotice({ kind: 'status', message: 'Project saved locally.' });
@@ -236,9 +303,7 @@ export default function App({ services }: Props) {
   const toggleStar = async () => {
     if (!currentProjectId) return;
     try {
-      const workspace = services.workspace.updateActive(projectName, editor.design);
-      setProjects(workspace.projects);
-      setProjects((await services.workspace.toggleStar(currentProjectId)).projects);
+      await services.workspace.toggleStar(currentProjectId);
     } catch (cause) {
       showNotice({ kind: 'error', message: `Could not update star: ${String(cause)}` });
     }
@@ -563,21 +628,22 @@ export default function App({ services }: Props) {
           <p>Shape, style, and share an emoji anywhere.</p>
         </div>
         <div className="history-actions" aria-label="Edit history">
-          <button disabled={!canUndo(editor)} onClick={() => dispatch({ type: 'undo' })}
+          <button disabled={workspaceBusy || !canUndo(editor)} onClick={() => dispatch({ type: 'undo' })}
             title="Undo (⌘Z)">↶ Undo</button>
-          <button disabled={!canRedo(editor)} onClick={() => dispatch({ type: 'redo' })}
+          <button disabled={workspaceBusy || !canRedo(editor)} onClick={() => dispatch({ type: 'redo' })}
             title="Redo (⇧⌘Z)">↷ Redo</button>
         </div>
       </header>
 
       <ProjectBar name={projectName} projects={presentedProjects} currentId={currentProjectId}
         persistenceStatus={persistenceStatus}
-        onNameChange={setProjectName} onNew={() => void newProject()}
+        busy={workspaceBusy}
+        onNameChange={changeProjectName} onNew={() => void newProject()}
         onOpen={(id) => void openProject(id)}
         menu={<WorkspaceMenu
           starred={presentedProjects.find((project) => project.id === currentProjectId)?.starredAt != null}
           storageHealth={storageHealth}
-          busy={recoveryBusy}
+          busy={recoveryBusy || workspaceBusy}
           onSaveNow={() => void saveNow()}
           onToggleStar={() => void toggleStar()}
           onDelete={() => void deleteProject()}
@@ -594,7 +660,15 @@ export default function App({ services }: Props) {
             <strong>Concurrent edits are safe.</strong>
             <span>Compare the preserved versions and choose what to keep.</span>
           </div>
-          <button type="button" onClick={reviewConflicts}>Review versions</button>
+          <button type="button" disabled={workspaceBusy} onClick={reviewConflicts}>Review versions</button>
+        </section>
+      )}
+      {workspaceBusy && (
+        <section className="workspace-status-banner" role="status">
+          <div>
+            <strong>Updating the project workspace…</strong>
+            <span>Editing will resume when the local transaction completes.</span>
+          </div>
         </section>
       )}
       {persistenceStatus === 'error' && (
@@ -603,18 +677,18 @@ export default function App({ services }: Props) {
             <strong>Local changes could not be saved.</strong>
             <span>Your editor remains open. Try the save again before closing this tab.</span>
           </div>
-          <button type="button" onClick={() => void saveNow()}>Try saving again</button>
+          <button type="button" disabled={workspaceBusy} onClick={() => void saveNow()}>Try saving again</button>
         </section>
       )}
 
       <WorkspaceRecoveryPanel
         issues={workspaceIssues}
-        busy={recoveryBusy}
+        busy={recoveryBusy || workspaceBusy}
         onExportQuarantined={(record) => void exportQuarantinedRecord(record)}
         onPurgeQuarantined={(record) => void purgeQuarantinedRecord(record)}
       />
 
-      <main className="editor-layout">
+      <main className="editor-layout" inert={workspaceBusy} aria-busy={workspaceBusy}>
         <div className="editor-panel-tabs" role="radiogroup" aria-label="Editing panels">
           <input className="panel-tab-input" type="radio" name="editor-panel" id="emoji-tab"
             defaultChecked />
@@ -670,6 +744,7 @@ export default function App({ services }: Props) {
 
         <section className="preview-region" aria-label="Canvas and export">
           <Preview
+            key={session.editorSessionEpoch}
             design={editor.design}
             size={editor.exportSize}
             services={services}
@@ -682,18 +757,37 @@ export default function App({ services }: Props) {
             onBrushChange={setBrush}
             onCanvasSettingsChange={setCanvasSettings}
             onPaintStroke={(layerId, stroke, createLayerName) =>
-              dispatch({ type: 'paint-stroke', layerId, stroke,
+              dispatchForEditorSession(session.editorSessionEpoch, {
+                type: 'paint-stroke', layerId, stroke,
                 ...(createLayerName ? { createLayerName } : {}) })
             }
             onMaskStroke={(layerId, stroke) =>
-              dispatch({ type: 'mask-stroke', layerId, stroke })
+              dispatchForEditorSession(session.editorSessionEpoch, {
+                type: 'mask-stroke', layerId, stroke,
+              })
             }
-            onTransformsChange={(updates, historyGroup) => dispatch({ type: 'update-layer-transforms', updates,
-              ...(historyGroup ? { historyGroup } : {}) })}
-            onSelectionChange={(layerIds) => dispatch({ type: 'select-layers', layerIds: expandGroupedSelection(layerIds) })}
-            onRasterLayer={(layer: RasterLayer) => dispatch({ type: 'add-layer', layer })}
-            onTransformCommit={() => dispatch({ type: 'commit-history-group' })}
-            onSizeChange={(size) => dispatch({ type: 'set-size', size })}
+            onTransformsChange={(updates, historyGroup) =>
+              dispatchForEditorSession(session.editorSessionEpoch, {
+                type: 'update-layer-transforms',
+                updates,
+                ...(historyGroup ? { historyGroup } : {}),
+              })
+            }
+            onSelectionChange={(layerIds) =>
+              dispatchForEditorSession(session.editorSessionEpoch, {
+                type: 'select-layers',
+                layerIds: expandGroupedSelection(layerIds),
+              })
+            }
+            onRasterLayer={(layer: RasterLayer) =>
+              dispatchForEditorSession(session.editorSessionEpoch, { type: 'add-layer', layer })
+            }
+            onTransformCommit={() =>
+              dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' })
+            }
+            onSizeChange={(size) =>
+              dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-size', size })
+            }
             onNotice={showNotice}
           />
           {hasConflicts && (
@@ -708,6 +802,7 @@ export default function App({ services }: Props) {
           <StarredProjectsBar
             projects={presentedProjects}
             renderer={services.renderer}
+            busy={workspaceBusy}
             onOpen={(id) => void openProject(id)}
             onUseAsTemplate={(id) => void createFromTemplate(id)}
           />

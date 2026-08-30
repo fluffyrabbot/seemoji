@@ -38,7 +38,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 ```
 
 The complete gate builds production assets and then enforces a JavaScript
-budget across all emitted chunks: at most 128,000 raw bytes and 40,000 gzip-9
+budget across all emitted chunks: at most 144,000 raw bytes and 45,000 gzip-9
 bytes. This keeps the DPR-aware viewport, pressure-aware paint and structured-node compositor,
 history, multi-selection, versioned cross-tab projects, conflict resolution, workspace recovery, and V2 scene-model baseline
 bounded while preserving the bundle-size reduction that motivated the
@@ -54,11 +54,14 @@ keyboard shortcuts, history behavior, and grid/snapping semantics.
 
 The application is live at [seemoji.pages.dev](https://seemoji.pages.dev/). It
 is a static Cloudflare Pages deployment with no Functions, server runtime,
-database, or storage bindings. The release workflow verifies the production
-build with the active Chromium gate and uploads that same `dist/` directory
-through Wrangler Direct Upload. Firefox and WebKit remain a separate manual
-pre-release experiment. See [deployment](docs/deployment.md) for the project,
-credential, and protected-environment configuration.
+database, or storage bindings. The protected release workflow runs the complete
+Chromium, Firefox, WebKit, and persistence-stress gate without production
+credentials, seals that exact `dist/` directory with a commit-and-digest manifest,
+verifies it on an isolated preview deployment, and only then promotes it through
+Wrangler Direct Upload. Production verification is bound to the manifest and a
+failed promotion automatically restores the previously captured deployment.
+See [deployment](docs/deployment.md) for the project, credential, approval, and
+rollback configuration.
 
 ## Architecture
 
@@ -69,9 +72,9 @@ runtime ports:
 UI event
    │
    ▼
-editorReducer + history ─────► WorkspaceController ─────► ProjectRepository
-                                      │                         │
-                                      └──── WorkspaceSync ─────┘
+EditorWorkspaceStore ────────► WorkspaceController ─────► ProjectRepository
+   │                                  │                         │
+   └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
 DesignDocumentV2 scene
@@ -146,7 +149,8 @@ content-hash guard.
 
 Zoom, pan, device-pixel-ratio preview resolution, active tools, and brush feel
 are transient workspace state rather than document state. Pointer coordinates
-are mapped back through the viewport before becoming normalized stroke points.
+are mapped back through the viewport and the target layer's inverse affine
+transform before becoming normalized layer-local stroke points.
 The brush applies a selectable pressure curve and stabilizer while sampling,
 then runs an iterative pressure-aware path simplifier at commit time.
 

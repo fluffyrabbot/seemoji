@@ -257,7 +257,7 @@ class PersistenceStateMachine {
 
   async #activate(): Promise<void> {
     const project = this.#random.pick([...this.#model.projects.values()]);
-    await this.#random.pick([this.#first, this.#second]).setActive(project.id);
+    await this.#random.pick([this.#first, this.#second]).setActive(project.id, project.revision);
     this.#model.activeProjectId = project.id;
   }
 
@@ -278,12 +278,13 @@ class PersistenceStateMachine {
 
   async #abortDelete(): Promise<void> {
     const deleting = this.#random.pick([...this.#model.projects.values()]);
-    const replacement = this.#random.pick([...this.#model.projects.values()]);
+    const survivor = [...this.#model.projects.values()].find((project) => project.id !== deleting.id);
+    const replacement = survivor ? null : this.#newProject('Unused stale-delete replacement');
     const result = await this.#second.deleteAndActivate(
       deleting.id,
       deleting.revision + 1,
-      replacement.id,
-      null,
+      survivor?.id ?? replacement!.id,
+      replacement,
     ).catch((cause: unknown) => cause);
     expect(result).toBeInstanceOf(ProjectConflictError);
   }

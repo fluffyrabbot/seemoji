@@ -40,9 +40,10 @@ behavior in Firefox and WebKit. The visual golden is tagged `@visual` and
 excluded from those engines because their canvas rasterization is allowed to
 differ.
 
-Run the dormant workflow:
+Run the standalone dormant workflow:
 
-- Before a release.
+- Before merging a browser-facing change when compatibility feedback should not
+  wait for the complete release gate.
 - After changing Preact, Vite, Playwright, or browser support policy.
 - After changing Canvas rendering, image decoding, clipboard/download adapters,
   storage behavior, or responsive CSS.
@@ -53,6 +54,9 @@ release or browser-facing change creates maintenance noise but no immediate
 user value. If releases become frequent or browser-specific regressions become
 common, promote this workflow to a scheduled or required gate based on that
 evidence.
+
+The release workflow always runs the same Firefox and WebKit projects regardless
+of whether the standalone compatibility workflow ran earlier.
 
 Cross-tab persistence changes must run this matrix before merge. The browser suite forces
 `BroadcastChannel` unavailable in one two-tab scenario so Firefox and WebKit exercise the
@@ -76,6 +80,9 @@ non-visual scenarios in both Firefox and WebKit.
 - `npm run test:e2e:compat`: build and run Firefox/WebKit behavior tests.
 - `npm run test:e2e:all`: build and run all configured browser projects.
 - `npm run check:compat`: active gate followed by Firefox/WebKit behavior.
+- `npm run check:artifact`: verify that `dist/` still exactly matches its release manifest.
+- `npm run check:release`: compatibility gate, both deep persistence models, and final artifact
+  verification; this is the unprivileged production release gate.
 
 The persistence model is independent of IndexedDB: it predicts complete projects, active identity,
 quarantined records, conflict resolution, and atomic import results. After every generated action,
@@ -94,30 +101,47 @@ write chain, so `flush()` is also a reliable quiescence boundary.
 
 ## Release gate
 
-The `Deploy Pages` workflow is separate from ordinary CI. It runs manually from
-`main` or automatically for `v*` tags, enters the protected `production`
-environment, runs the active `npm run check` gate, and uploads the resulting
-`dist/` directory to Cloudflare Pages. The tests and deployment therefore
-consume the same production artifact rather than independent rebuilds.
-Cloudflare project access is checked immediately after dependency installation,
-before browser installation or test work, so a missing, expired, or malformed
-deployment credential fails cheaply.
+The `Deploy Pages` workflow is separate from ordinary CI and can run only by
+manual dispatch from `main`. Tags, pull requests, and pushes cannot deploy.
+Release frequency is low enough that this boundary favors certainty over the
+dormant day-to-day compatibility optimization.
 
-After upload, the workflow checks the live production document and its current
-fingerprinted JavaScript asset. Missing CSP, permissions restrictions, defensive
-headers, or immutable asset caching fails the deployment job even when Wrangler
-accepted the upload. This production-only assertion is not duplicated in the
-ordinary CI workflow because local Vite preview does not interpret Cloudflare's
-`_headers` file.
+Its unprivileged `verify` job runs `npm run check:release`, which includes the
+active gate, Firefox and WebKit compatibility, both 24-seed persistence stress
+models, and a final immutable-artifact check. `npm run build` writes a release
+manifest containing the full Git SHA and every public file's SHA-256 digest.
+The verified `dist/` directory is uploaded as an immutable GitHub artifact; no
+Cloudflare secret is available to this job.
 
-The deploy job deliberately does not reinstall Firefox and WebKit or repeat
-`check:compat`. Run the dormant compatibility workflow before a release when
-the policy above calls for it, then use the protected-environment approval as
-the human release boundary. Keeping the compatibility matrix out of the deploy
-job prevents every retry or credential-only redeploy from paying the broad
-browser cost again.
+Only the dependent `deploy` job enters the protected `production` environment.
+It downloads and re-verifies the artifact, and Cloudflare credentials are scoped
+to only the steps that require them. The artifact is first uploaded to a unique
+preview branch. Its immutable deployment URL must return the expected commit,
+digests, exact CSP, exact document revalidation policy, and exact fingerprinted
+asset cache policy before production can change.
+
+Immediately before production upload, the workflow reads the project's canonical
+production deployment and fails closed unless its full commit-bound release
+manifest and every listed public file verify. It persists that known-good recovery
+bundle as a 30-day GitHub artifact before production changes. The production
+hostname must then return the locally verified candidate manifest and file
+digests; a stale healthy release or different payload claiming the same commit
+therefore fails.
+
+If upload is uncertain, verification fails, or a normal cancellation occurs while
+the runner remains available, the workflow calls Cloudflare's supported rollback
+API, polls until the captured deployment and commit are canonical again, verifies
+every live file against the persisted previous manifest, and remains red for
+investigation. Force-cancel and runner loss cannot execute in-job cleanup; use the
+persisted recovery artifact and the manual procedure in [deployment](deployment.md).
+
+The sole migration exception is the reviewed `bootstrap_legacy_baseline` dispatch
+input. It is accepted only while canonical production returns the exact HTML SPA
+fallback at `/release-manifest.json`, persists the legacy deployment identity
+before writing, and refuses to run after the first manifest-bearing production
+release. It does not weaken the full-manifest invariant for subsequent releases.
 
 Keep deployment dormant until the Pages project, environment protection, and
 Cloudflare secrets described in [deployment](deployment.md) exist. Do not add a
-second Pages build through Git integration; that would weaken the verified
-artifact boundary and duplicate CI.
+second Pages build through Git integration or a dashboard upload path; either
+would bypass the verified-artifact and serialized-rollback boundary.

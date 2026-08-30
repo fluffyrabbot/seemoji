@@ -16,6 +16,7 @@ import {
   type DesignDocument,
   type MaskStroke,
   type RasterLayer,
+  type SceneLayer,
   type StrokePoint,
   type Transform,
 } from '../domain/design';
@@ -23,9 +24,11 @@ import { createFloodFillRuns } from '../domain/floodFill';
 import {
   boundsIntersect,
   hitTestLayers,
+  layerLocalToWorldMatrix,
   layerWorldBounds,
   layerWorldCorners,
   unionWorldBounds,
+  worldPointToLayerLocal,
   type WorldBounds,
 } from '../domain/sceneGeometry';
 import {
@@ -115,10 +118,16 @@ interface DraftStroke {
   readonly pointerId: number;
   readonly targetLayerId: string;
   readonly createLayer: boolean;
+  readonly layerLocal: boolean;
   readonly points: readonly StrokePoint[];
   readonly width: number;
   readonly color: string;
   readonly opacity: number;
+}
+
+interface HoverSample {
+  readonly point: Point;
+  readonly layerId: string | null;
 }
 
 const clamp = (value: number, [minimum, maximum]: readonly [number, number]) =>
@@ -137,6 +146,11 @@ const pointInLayerSpace = (point: Point, center: Point, rotate: number): Point =
 const wrappedDegrees = (value: number): number => {
   const wrapped = ((value + 180) % 360 + 360) % 360 - 180;
   return clamp(wrapped, DESIGN_LIMITS.rotate);
+};
+
+const svgLayerTransform = (layer: SceneLayer, size: number): string => {
+  const { a, b, c, d, e, f } = layerLocalToWorldMatrix(layer);
+  return `matrix(${a} ${b} ${c} ${d} ${e * size} ${f * size})`;
 };
 
 export default function Preview({
@@ -169,7 +183,7 @@ export default function Preview({
   const [draft, setDraft] = useState<DraftStroke | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [snapGuides, setSnapGuides] = useState<{ readonly x?: number; readonly y?: number }>({});
-  const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
+  const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const {
     viewport,
@@ -189,6 +203,7 @@ export default function Preview({
   );
   const renderKey = `${size}:${JSON.stringify(design)}`;
   const previewKey = `${previewRenderSize}:${JSON.stringify(previewDesign)}`;
+  const [paintedPreviewKey, setPaintedPreviewKey] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<{ readonly key: string; readonly blob: Blob } | null>(
     null,
   );
@@ -198,6 +213,17 @@ export default function Preview({
   const layer = getEmojiLayer(design);
   const selectedLayers = design.layers.filter((candidate) => selectedLayerIds.includes(candidate.id));
   const selectedLayer = selectedLayers[0] ?? layer;
+  const drawingLayer = tool === 'eraser' || tool === 'restore'
+    ? selectedLayer
+    : tool === 'brush' && selectedLayer.kind === 'strokes'
+      ? selectedLayer
+      : null;
+  const draftLayer = draft?.layerLocal
+    ? design.layers.find((candidate) => candidate.id === draft.targetLayerId) ?? null
+    : null;
+  const hoverLayer = hoverSample?.layerId
+    ? design.layers.find((candidate) => candidate.id === hoverSample.layerId) ?? null
+    : null;
   const selectionBounds = unionWorldBounds(selectedLayers) ?? layerWorldBounds(selectedLayer);
   const worldCorners = selectedLayers.length === 1 ? layerWorldCorners(selectedLayer) : [
     { x: selectionBounds.left, y: selectionBounds.top },
@@ -230,6 +256,7 @@ export default function Preview({
         if (!canvasContext) throw new Error('Canvas 2D rendering is unavailable');
         canvasContext.clearRect(0, 0, previewRenderSize, previewRenderSize);
         canvasContext.drawImage(frame.canvas, 0, 0);
+        setPaintedPreviewKey(previewKey);
         if (frame.warnings.length > 0) {
           onNotice({ kind: 'error', message: frame.warnings.join(' ') });
         }
@@ -247,8 +274,15 @@ export default function Preview({
       });
   }, [design, previewDesign, previewRenderSize, size, services.renderer, onNotice, renderKey, previewKey]);
 
-  const strokePointInStage = (event: PointerEvent): StrokePoint | null => {
-    const point = pointInCanvas(event);
+  const strokePointInStage = (
+    event: PointerEvent,
+    coordinateLayer: SceneLayer | null,
+  ): StrokePoint | null => {
+    const worldPoint = pointInCanvas(event);
+    if (!worldPoint) return null;
+    const point = coordinateLayer
+      ? worldPointToLayerLocal(coordinateLayer, worldPoint)
+      : worldPoint;
     if (!point) return null;
     return {
       x: clamp(point.x, [0, 1]),
@@ -288,6 +322,13 @@ export default function Preview({
       return;
     }
     if (tool === 'fill') {
+      if (paintedPreviewKey !== previewKey) {
+        onNotice({
+          kind: 'status',
+          message: 'Wait for the current preview to finish rendering before filling.',
+        });
+        return;
+      }
       const point = pointInCanvas(event);
       const source = canvasRef.current;
       if (!point || !source) return;
@@ -313,19 +354,23 @@ export default function Preview({
       }
       return;
     }
-    const point = strokePointInStage(event);
-    if (!point) return;
-    event.preventDefault();
-    stageRef.current.setPointerCapture(event.pointerId);
     const targetIsStrokeLayer = selectedLayer.kind === 'strokes';
     const targetLayerId = tool === 'brush' && !targetIsStrokeLayer
       ? crypto.randomUUID()
       : selectedLayer.id;
+    const coordinateLayer = tool === 'brush'
+      ? targetIsStrokeLayer ? selectedLayer : null
+      : selectedLayer;
+    const point = strokePointInStage(event, coordinateLayer);
+    if (!point) return;
+    event.preventDefault();
+    stageRef.current.setPointerCapture(event.pointerId);
     const next: DraftStroke = {
       kind: tool,
       pointerId: event.pointerId,
       targetLayerId,
       createLayer: tool === 'brush' && !targetIsStrokeLayer,
+      layerLocal: coordinateLayer !== null,
       points: [point],
       width: brush.width,
       color: brush.color,
@@ -378,7 +423,10 @@ export default function Preview({
   const continueGesture = (event: PointerEvent) => {
     const worldPoint = pointInCanvas(event);
     if (tool === 'brush' || tool === 'eraser' || tool === 'restore') {
-      setHoverPoint(worldPoint);
+      const localPoint = worldPoint && drawingLayer
+        ? worldPointToLayerLocal(drawingLayer, worldPoint)
+        : worldPoint;
+      setHoverSample(localPoint ? { point: localPoint, layerId: drawingLayer?.id ?? null } : null);
     }
     if (continuePan(event)) return;
     const activeMarquee = marqueeRef.current;
@@ -390,7 +438,10 @@ export default function Preview({
     }
     const activeDraft = draftRef.current;
     if (activeDraft?.pointerId === event.pointerId) {
-      const rawPoint = strokePointInStage(event);
+      const coordinateLayer = activeDraft.layerLocal
+        ? design.layers.find((candidate) => candidate.id === activeDraft.targetLayerId) ?? null
+        : null;
+      const rawPoint = strokePointInStage(event, coordinateLayer);
       const previous = activeDraft.points.at(-1);
       const point = rawPoint && previous
         ? stabilizeStrokePoint(previous, rawPoint, brush.stabilization)
@@ -489,7 +540,10 @@ export default function Preview({
     }
     const activeDraft = draftRef.current;
     if (activeDraft?.pointerId === event.pointerId) {
-      const rawPoint = strokePointInStage(event);
+      const coordinateLayer = activeDraft.layerLocal
+        ? design.layers.find((candidate) => candidate.id === activeDraft.targetLayerId) ?? null
+        : null;
+      const rawPoint = strokePointInStage(event, coordinateLayer);
       const previous = activeDraft.points.at(-1);
       const point = rawPoint && previous
         ? stabilizeStrokePoint(previous, rawPoint, brush.stabilization)
@@ -705,7 +759,7 @@ export default function Preview({
         )}
       </div>
 
-      <div className="preview-stage" aria-busy={rendering}>
+      <div className="preview-stage" aria-busy={rendering || paintedPreviewKey !== previewKey}>
         <div
           ref={stageRef}
           className={`preview-viewport interactive-canvas tool-${tool}`}
@@ -720,7 +774,7 @@ export default function Preview({
           onPointerMove={continueGesture}
           onPointerUp={endGesture}
           onPointerCancel={cancelGesture}
-          onPointerLeave={() => setHoverPoint(null)}
+          onPointerLeave={() => setHoverSample(null)}
           onWheel={zoomWithWheel}
         >
           <div className="checkerboard canvas-world" style={{ transform: worldTransform }}>
@@ -742,25 +796,30 @@ export default function Preview({
             {draft && (
               <svg className="draft-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
-              <polyline
-                className={draft.kind === 'brush' ? 'draft-brush' : 'draft-eraser'}
-                points={draft.points.map((point) =>
-                  `${point.x * previewRenderSize},${point.y * previewRenderSize}`).join(' ')}
-                style={{
-                  stroke: draft.kind === 'brush'
-                    ? draft.color
-                    : draft.kind === 'restore' ? '#65e6a5' : '#ffffff',
-                  strokeWidth: draft.width * previewRenderSize,
-                  opacity: draft.opacity,
-                }}
-              />
+                <g transform={draftLayer ? svgLayerTransform(draftLayer, previewRenderSize) : undefined}>
+                  <polyline
+                    className={draft.kind === 'brush' ? 'draft-brush' : 'draft-eraser'}
+                    points={draft.points.map((point) =>
+                      `${point.x * previewRenderSize},${point.y * previewRenderSize}`).join(' ')}
+                    style={{
+                      stroke: draft.kind === 'brush'
+                        ? draft.color
+                        : draft.kind === 'restore' ? '#65e6a5' : '#ffffff',
+                      strokeWidth: draft.width * previewRenderSize,
+                      opacity: draft.opacity,
+                    }}
+                  />
+                </g>
             </svg>
             )}
-            {!draft && hoverPoint && (tool === 'brush' || tool === 'eraser' || tool === 'restore') && (
+            {!draft && hoverSample && (tool === 'brush' || tool === 'eraser' || tool === 'restore') && (
               <svg className="tool-cursor-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
-                <circle cx={hoverPoint.x * previewRenderSize} cy={hoverPoint.y * previewRenderSize}
-                  r={brush.width * previewRenderSize / 2} />
+                <g transform={hoverLayer ? svgLayerTransform(hoverLayer, previewRenderSize) : undefined}>
+                  <circle cx={hoverSample.point.x * previewRenderSize}
+                    cy={hoverSample.point.y * previewRenderSize}
+                    r={brush.width * previewRenderSize / 2} />
+                </g>
               </svg>
             )}
             {!showOriginal && tool === 'select' && (

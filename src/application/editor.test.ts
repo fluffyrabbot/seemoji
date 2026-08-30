@@ -1,7 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { getEmojiLayer } from '../domain/design';
+import {
+  DEFAULT_TRANSFORM,
+  getEmojiLayer,
+  type BrushStroke,
+  type MaskStroke,
+  type StrokeLayer,
+  type StrokePoint,
+} from '../domain/design';
+import { DESIGN_CAPACITY } from '../domain/designCapacity';
+import { decodeDesignDocument } from '../domain/designCodec';
 import { createEmojiAssetRef } from '../domain/emoji';
 import { editorReducer, INITIAL_EDITOR_STATE } from './editor';
+
+const POINT: StrokePoint = { x: 0.5, y: 0.5, pressure: 0.5 };
+
+const brushStroke = (id: string, pointCount: number): BrushStroke => ({
+  id,
+  points: Array<StrokePoint>(pointCount).fill(POINT),
+  width: 0.03,
+  color: '#000000',
+  opacity: 1,
+});
+
+const maskStroke = (id: string, pointCount: number): MaskStroke => ({
+  id,
+  mode: 'erase',
+  points: Array<StrokePoint>(pointCount).fill(POINT),
+  width: 0.03,
+});
+
+const strokeLayer = (
+  id: string,
+  strokes: readonly BrushStroke[] = [],
+  mask: readonly MaskStroke[] = [],
+): StrokeLayer => ({
+  id,
+  kind: 'strokes',
+  name: 'Paint',
+  visible: true,
+  opacity: 1,
+  transform: DEFAULT_TRANSFORM,
+  strokes,
+  mask,
+});
 
 describe('editor reducer', () => {
   it('updates the emoji layer without changing source identity', () => {
@@ -179,5 +220,137 @@ describe('editor reducer', () => {
     const undone = editorReducer(moved, { type: 'undo' });
     expect(undone.design.layers[1]).toMatchObject({ id: 'emoji-2', transform: { x: 0.05, y: 0.05 } });
     expect(undone.future).toHaveLength(1);
+  });
+
+  it('rejects strokes beyond the per-stroke and per-collection capacities', () => {
+    const overlong = editorReducer(INITIAL_EDITOR_STATE, {
+      type: 'paint-stroke',
+      layerId: 'paint-1',
+      createLayerName: 'Paint',
+      stroke: brushStroke('too-long', DESIGN_CAPACITY.pointsPerStroke + 1),
+    });
+    expect(overlong).toBe(INITIAL_EDITOR_STATE);
+
+    const fullCollection = Array<BrushStroke>(DESIGN_CAPACITY.strokesPerCollection)
+      .fill(brushStroke('existing', 1));
+    const full = editorReducer(INITIAL_EDITOR_STATE, {
+      type: 'add-layer',
+      layer: strokeLayer('paint-1', fullCollection),
+    });
+    expect(full).not.toBe(INITIAL_EDITOR_STATE);
+    expect(editorReducer(full, {
+      type: 'paint-stroke',
+      layerId: 'paint-1',
+      stroke: brushStroke('overflow', 1),
+    })).toBe(full);
+
+    const emoji = getEmojiLayer(INITIAL_EDITOR_STATE.design);
+    const fullMask = editorReducer(INITIAL_EDITOR_STATE, {
+      type: 'load-design',
+      design: {
+        ...INITIAL_EDITOR_STATE.design,
+        layers: [{
+          ...emoji,
+          mask: Array<MaskStroke>(DESIGN_CAPACITY.strokesPerCollection)
+            .fill(maskStroke('existing-mask', 1)),
+        }],
+      },
+    });
+    expect(fullMask).not.toBe(INITIAL_EDITOR_STATE);
+    expect(editorReducer(fullMask, {
+      type: 'mask-stroke',
+      layerId: emoji.id,
+      stroke: maskStroke('mask-overflow', 1),
+    })).toBe(fullMask);
+  });
+
+  it('accepts the final available scene point and rejects the next one', () => {
+    const nearCapacity = [
+      brushStroke('stroke-1', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-2', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-3', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-4', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-5', DESIGN_CAPACITY.pointsPerStroke - 1),
+    ];
+    const base = editorReducer(INITIAL_EDITOR_STATE, {
+      type: 'add-layer',
+      layer: strokeLayer('paint-1', nearCapacity),
+    });
+    const full = editorReducer(base, {
+      type: 'paint-stroke',
+      layerId: 'paint-1',
+      stroke: brushStroke('final-point', 1),
+    });
+    expect(full).not.toBe(base);
+    expect(decodeDesignDocument(full.design).ok).toBe(true);
+    expect(editorReducer(full, {
+      type: 'mask-stroke',
+      layerId: 'paint-1',
+      stroke: maskStroke('one-too-many', 1),
+    })).toBe(full);
+  });
+
+  it('rejects capacity-breaking layer replacement, insertion, and duplication', () => {
+    const largeLayer = strokeLayer('paint-1', [
+      brushStroke('stroke-1', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-2', DESIGN_CAPACITY.pointsPerStroke),
+      brushStroke('stroke-3', DESIGN_CAPACITY.pointsPerStroke),
+    ]);
+    const base = editorReducer(INITIAL_EDITOR_STATE, { type: 'add-layer', layer: largeLayer });
+    expect(base).not.toBe(INITIAL_EDITOR_STATE);
+
+    expect(editorReducer(base, {
+      type: 'duplicate-layer',
+      layerId: largeLayer.id,
+      duplicateId: 'paint-2',
+      name: 'Paint copy',
+    })).toBe(base);
+
+    const invalidLayer = strokeLayer('invalid', [
+      brushStroke('too-long', DESIGN_CAPACITY.pointsPerStroke + 1),
+    ]);
+    const invalidDesign = {
+      ...base.design,
+      layers: [...base.design.layers, invalidLayer],
+    };
+    expect(editorReducer(base, { type: 'load-design', design: invalidDesign })).toBe(base);
+    expect(editorReducer(base, { type: 'replace-design', design: invalidDesign })).toBe(base);
+    expect(editorReducer(base, { type: 'add-layer', layer: invalidLayer })).toBe(base);
+    expect(editorReducer(base, { type: 'insert-layers', layers: [invalidLayer] })).toBe(base);
+    expect(editorReducer(base, {
+      type: 'update-layer',
+      layer: { ...invalidLayer, id: largeLayer.id },
+    })).toBe(base);
+  });
+
+  it('accepts exactly 100 layers and rejects multi-layer duplication to 101', () => {
+    const additions = Array.from(
+      { length: DESIGN_CAPACITY.layers - 2 },
+      (_, index) => strokeLayer(`paint-${index}`),
+    );
+    const oneSlotLeft = editorReducer(INITIAL_EDITOR_STATE, {
+      type: 'insert-layers',
+      layers: additions,
+    });
+    expect(oneSlotLeft.design.layers).toHaveLength(DESIGN_CAPACITY.layers - 1);
+
+    const full = editorReducer(oneSlotLeft, {
+      type: 'duplicate-layer',
+      layerId: 'emoji-1',
+      duplicateId: 'emoji-final',
+      name: 'Emoji final',
+    });
+    expect(full.design.layers).toHaveLength(DESIGN_CAPACITY.layers);
+    expect(decodeDesignDocument(full.design).ok).toBe(true);
+    expect(editorReducer(full, {
+      type: 'add-layer',
+      layer: strokeLayer('layer-101'),
+    })).toBe(full);
+
+    expect(editorReducer(oneSlotLeft, {
+      type: 'duplicate-layers',
+      layerIds: ['emoji-1', 'paint-0'],
+      duplicateIds: ['emoji-copy', 'paint-copy'],
+    })).toBe(oneSlotLeft);
   });
 });
