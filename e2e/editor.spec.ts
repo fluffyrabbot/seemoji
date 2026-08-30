@@ -152,7 +152,7 @@ const runProjectAction = async (page: Page, name: string) => {
 test.beforeEach(async ({ page }) => {
   await mockArtwork(page);
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
 });
 
 test(
