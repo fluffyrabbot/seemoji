@@ -1,5 +1,4 @@
 import {
-  DEFAULT_APPEARANCE,
   DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   type Appearance,
@@ -19,7 +18,7 @@ import {
   type TextLayer,
   type Transform,
 } from './design';
-import { createEmojiAssetRef, toCodepoint, type EmojiAssetRef } from './emoji';
+import { toCodepoint, type EmojiAssetRef } from './emoji';
 
 export type DecodeResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -564,70 +563,5 @@ export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocumen
   return {
     ok: false,
     error: `unsupported design document version: ${String(document.version)}`,
-  };
-}
-
-const clamp = (value: unknown, fallback: number, range: readonly [number, number]) => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.min(range[1], Math.max(range[0], value));
-};
-
-/** Explicit one-way migration from the prototype's EditParams shape. */
-export function migrateLegacyEditParams(
-  grapheme: string,
-  value: unknown,
-): DecodeResult<DesignDocument> {
-  const legacy = record(value);
-  if (!legacy || legacy.v !== 1) {
-    return { ok: false, error: 'unsupported legacy edit parameters' };
-  }
-
-  const rawOutline = record(legacy.outline);
-  const outlineWidth = rawOutline
-    ? clamp(rawOutline.width, 0, [0, DESIGN_LIMITS.outlineWidth[1] * 128]) / 128
-    : 0;
-  const outline =
-    rawOutline &&
-    outlineWidth > 0 &&
-    typeof rawOutline.color === 'string' &&
-    HEX_COLOR.test(rawOutline.color)
-      ? { width: outlineWidth, color: rawOutline.color }
-      : null;
-
-  const versionOne: DesignDocumentV1 = {
-      version: 1,
-      source: createEmojiAssetRef(grapheme),
-      transform: {
-        rotate: clamp(legacy.rotate, DEFAULT_TRANSFORM.rotate, DESIGN_LIMITS.rotate),
-        scaleX: clamp(legacy.scaleX, DEFAULT_TRANSFORM.scaleX, DESIGN_LIMITS.scaleX),
-        scaleY: clamp(legacy.scaleY, DEFAULT_TRANSFORM.scaleY, DESIGN_LIMITS.scaleY),
-        skewX: clamp(legacy.skewX, DEFAULT_TRANSFORM.skewX, DESIGN_LIMITS.skewX),
-        skewY: clamp(legacy.skewY, DEFAULT_TRANSFORM.skewY, DESIGN_LIMITS.skewY),
-        flipH: typeof legacy.flipH === 'boolean' ? legacy.flipH : false,
-        flipV: typeof legacy.flipV === 'boolean' ? legacy.flipV : false,
-      },
-      appearance: {
-        hue: clamp(legacy.hue, DEFAULT_APPEARANCE.hue, DESIGN_LIMITS.hue),
-        saturation: clamp(
-          typeof legacy.saturate === 'number' ? legacy.saturate / 100 : undefined,
-          DEFAULT_APPEARANCE.saturation,
-          DESIGN_LIMITS.saturation,
-        ),
-        brightness: clamp(
-          typeof legacy.brightness === 'number' ? legacy.brightness / 100 : undefined,
-          DEFAULT_APPEARANCE.brightness,
-          DESIGN_LIMITS.brightness,
-        ),
-        blur: clamp(
-          typeof legacy.blur === 'number' ? legacy.blur / 128 : undefined,
-          DEFAULT_APPEARANCE.blur,
-          DESIGN_LIMITS.blur,
-        ),
-        outline,
-      },
-  };
-  return {
-    ok: true,
-    value: migrateDesignDocumentV1(versionOne),
   };
 }

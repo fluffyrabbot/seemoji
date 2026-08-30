@@ -4,17 +4,22 @@
 | --- | --- |
 | Author | seemoji engineering |
 | Date | 2026-08-27 |
-| Revised | 2026-08-27 |
-| Status | Draft |
+| Revised | 2026-08-28 |
+| Status | Draft — rebased onto the canonical project workspace |
 | Audience | Senior engineers working in this repository |
 
 ## Overview
 
+> **Persistence baseline (2026-08-28):** the workspace uses canonical autosaved
+> `Project` records in IndexedDB, compare-and-swap revisions, conflict-copy
+> preservation, and cross-tab broadcasts. Pack work extends each project's
+> `DesignDocument` source identity. It must not create a parallel snapshot store.
+
 Seemoji is a local-first editor: pick an emoji, apply slight visual edits, and copy or download a transparent PNG. Artwork today is a single pinned source — `jdecked/twemoji` 15.1.0 SVG — fetched by `TwemojiCdnAssetSource` from jsDelivr. `EmojiAssetRef.pack` is the TypeScript literal `'twemoji'`, `decodeSource` in `src/domain/designCodec.ts` rejects any other pack, and `createEmojiAssetRef` always pins Twemoji 15.1.0.
 
-This document describes how to swap among **allowlisted, open-source / permissive-license** emoji sets without turning the editor, renderer, or favorites store into pack-specific software. Packs are **versioned catalogs**. Pack-specific path chaos is solved **at ingest** (Node, not shipped). Runtime is **one loader** that fetches a canonical SVG or PNG still, plus a tiny catalog port for manifests, coverage, **and byte URLs**.
+This document describes how to swap among **allowlisted, open-source / permissive-license** emoji sets without turning the editor, renderer, or project workspace into pack-specific software. Packs are **versioned catalogs**. Pack-specific path chaos is solved **at ingest** (Node, not shipped). Runtime is **one loader** that fetches a canonical SVG or PNG still, plus a tiny catalog port for manifests, coverage, **and byte URLs**.
 
-A favorite remains a snapshot of *this* artwork, not “whatever 😀 looks like on this machine.” The session’s default pack is an independent editor preference. Published snapshot trees are **write-once**: a recipe pins a pack version whose bytes must not move when a later pack is added.
+A project remains a snapshot of *this* artwork, not “whatever 😀 looks like on this machine.” The session’s default pack is an independent editor preference. Published snapshot trees are **write-once**: a recipe pins a pack version whose bytes must not move when a later pack is added.
 
 ## Background & Motivation
 
@@ -26,10 +31,12 @@ The hexagonal layout in `README.md` is still the right map:
 UI event
    │
    ▼
-editorReducer ───────────────► FavoritesRepository
+editorReducer ─► WorkspaceController ─► ProjectRepository
+                         │
+                         └─────────────► WorkspaceSync
    │
    ▼
-DesignDocumentV1
+DesignDocumentV2
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -43,33 +50,36 @@ Relevant facts in the tree today:
 | --- | --- | --- |
 | Asset identity | `src/domain/emoji.ts` | `pack: 'twemoji'`, `packVersion`, `codepoint`, `grapheme`. `toCodepoint` lowercases, dash-separates, strips U+FE0F. JSDoc currently says “filename used by Twemoji”. |
 | Factory | `createEmojiAssetRef(grapheme)` | Always `{ pack: 'twemoji', packVersion: TWEMOJI_PACK_VERSION ('15.1.0'), ... }`. |
-| Document | `src/domain/design.ts` | `DesignDocumentV1.source: EmojiAssetRef`. Unknown versions rejected. |
+| Document | `src/domain/design.ts` | `DesignDocumentV2.layers[*].source: EmojiAssetRef` for emoji layers. Unknown versions rejected; V1 recipes promote to V2. |
 | Codec | `src/domain/designCodec.ts` | **Whitelist constructor**: `source.pack !== 'twemoji'` → error; copies four fields; **silently drops extra keys**. Semver `packVersion` required. Grapheme/codepoint must agree. No `encodeDesignDocument`; persistence is `JSON.stringify` of the in-memory object. |
 | Port | `src/ports/emojiAssetSource.ts` | `load(ref) → Promise<CanvasImageSource>`. |
 | Adapter | `src/adapters/browser/twemojiAssetSource.ts` | jsDelivr `.../jdecked/twemoji@{ver}/assets/svg/{codepoint}.svg`. CORS, content-type `svg`, blob-URL decode, `URL.revokeObjectURL` in `finally`, in-memory promise cache. Canvas never points `src` at the CDN. |
 | Coordinator | `src/application/renderCoordinator.ts` | `validateSource` is `load()`. Frame/PNG LRU keys are `JSON.stringify(design)`. Pack-agnostic. |
-| Editor | `src/application/editor.ts` | `EditorState` is `{ design, exportSize }`. `set-source` replaces `design.source` blindly. `reset` keeps source (`resetDesign`). `replace-design` loads a favorite as-is. |
+| Editor | `src/application/editor.ts` | `EditorState` owns the active V2 design, selection, export size, and bounded history. `set-source` updates the primary emoji layer. `load-design` opens a project and resets history. |
 | Composition | `src/main.tsx` | Wires `TwemojiCdnAssetSource` + `BrowserCanvasRenderer`. |
 | Picker | `src/ui/EmojiPicker.tsx` | 90 curated graphemes as **system-font text**. Paste uses `firstGrapheme`. |
 | Selection | `src/ui/App.tsx` `selectEmoji` | `createEmojiAssetRef` then `renderer.validateSource` then `set-source`. |
 | Footer | `src/ui/App.tsx` | Hardcoded Twemoji CC BY 4.0. |
 | Notices | `src/ui/App.tsx` `showNotice` | `kind: 'status'` auto-clears after **4 seconds**. Errors persist until dismiss. |
 | Copy / Download | `src/ui/Preview.tsx` | Copy success: `"Copied. Paste it into Discord."` Download: `fileExport.downloadPng` with **no notice**. |
-| Favorites | `src/ui/FavoritesBar.tsx` | Re-renders `favorite.design` at 64px through `RenderCoordinator`. The thumbnail `useEffect` has **no `.catch()`**. |
-| Persistence | `src/adapters/browser/localFavoritesRepository.ts` | `seemoji:favorites:v2`. Recipe only. `list()` maps every entry through `decodeFavorite` and **throws `corrupt` on the first failure**. `save()` calls `list()` then persists that array — a skip-on-list that did not keep raw slots would wipe skipped recipes. |
+| Projects | `src/ui/StarredProjectsBar.tsx` | Starred projects are a metadata view over canonical projects. Thumbnails render `project.design` at 64px and catch render failures. |
+| Persistence | `src/adapters/browser/indexedDbProjectRepository.ts` | One IndexedDB record per project. Invalid records are skipped independently. Writes compare the expected revision transactionally; stale edits become separately identified conflict copies in `WorkspaceController`. |
+| Cross-tab | `src/adapters/browser/browserWorkspaceSync.ts` | BroadcastChannel-primary, storage-event-fallback invalidations announce changed project IDs only. Idle tabs reload IndexedDB records; stale saves cannot overwrite a newer revision. |
 | Planner | `src/domain/renderPlan.ts` | Affine + output-relative blur/outline. Does not read `source.pack`. |
 | Renderer | `src/adapters/browser/canvasRenderer.ts` | `drawImage(asset, …)` + filters + outline. Pack-agnostic. |
 | Boundaries | `src/architecture.test.ts` | domain / ports / application / `adapters/browser` must not import React, Preact, or `src/ui`. UI (`App.tsx`, `EmojiPicker.tsx`, `Preview.tsx`) imports application + domain only, not adapters. |
 | Hosting | `docs/deployment.md` | Static Cloudflare Pages. No Functions, KV, R2, or server. |
-| JS budget | `scripts/check-bundle-budget.mjs` | **45,000 raw / 17,000 gzip-9** across **all** emitted `.js` chunks. |
-| e2e | `e2e/editor.spec.ts` | Playwright serves `dist/`. Intercepts `https://cdn.jsdelivr.net/**`. 404s URLs `endsWith('/41.svg')`. Copy-reject text is `toContainText('No Twemoji')`. `@visual` is Chromium-only (`playwright.config.ts`). |
+| JS budget | `scripts/check-bundle-budget.mjs` | **128,000 raw / 40,000 gzip-9** across **all** emitted `.js` chunks. |
+| e2e | `e2e/editor.spec.ts` | Playwright serves `dist/`, intercepts artwork, and includes two-tab project concurrency. Copy-reject text contains `No Twemoji`. `@visual` is Chromium-only. |
 | Layout | `src/index.css` | Narrow overflow invariant: 620px two-column, 390×844 stacked with no horizontal overflow. Picker grid becomes 8 columns at 620px. |
 
-Measured production JS (2026-08-27 `dist/assets/index-CG0aWfGM.js`): **42,659 raw / 15,678 gzip-9**. Headroom is **2,341 raw / 1,322 gzip-9**. That budget cannot absorb a glyph set, a second copy of Twemoji, or a runtime pack library. Catalog client + pack UI will not fit in 1.3 KB gzip; see [JS budget](#js-budget).
+Measured production JS after workspace recovery (2026-08-29): approximately
+**121,400 raw / 37,600 gzip-9**. Glyph manifests and artwork remain outside the
+JavaScript graph; see [JS budget](#js-budget).
 
 ### Pain points
 
-1. **Identity is Twemoji-shaped.** The document already pins pack + version, but the type system and codec refuse to describe any other pack. The product invariant we want (favorites are snapshots) is half-implemented.
+1. **Identity is Twemoji-shaped.** The document already pins pack + version, but the type system and codec refuse to describe any other pack. The product invariant we want (projects are snapshots) is half-implemented.
 2. **The picker lies.** Cells are system-font graphemes. Swapping the fetch source without swapping picker art would show Apple/Samsung/Segoe glyphs and export Twemoji (or Noto, or Fluent) pixels.
 3. **Coverage is a 404.** `validateSource` is a network round-trip. That is acceptable for one paste. It is not acceptable as a way to discover which of ~3–4k glyphs a pack contains.
 4. **Attribution is a footer string.** The product *is* modification plus PNG redistribution. License terms differ across packs (attribution, share-alike, BSD notice). That has to be data, not a README footnote.
@@ -81,14 +91,14 @@ Measured production JS (2026-08-27 `dist/assets/index-CG0aWfGM.js`): **42,659 ra
 
 - Allow the user to choose among **allowlisted** packs (and, when a pack has more than one listed snapshot, versions and styles) for **new** picks and paste.
 - Keep every `DesignDocument` a **pinned snapshot**: pack id + semver + optional style + canonical codepoint + grapheme, with **write-once bytes** behind that version.
-- Load a favorite **exactly as stored**. Never remap it onto the session pack. Never rewrite the session pack when applying a favorite.
+- Open a project **exactly as stored**. Never remap it onto the session pack. Never rewrite the session pack when opening a project.
 - On an explicit pack / version / style switch of the *open* design: remap the same grapheme if the target snapshot covers it; otherwise keep the old `source` and tell the user. **Never silent-substitute** a different grapheme or a fallback glyph.
 - Show **pack artwork** in the picker, filtered by that snapshot’s coverage.
 - Derive footer attribution from the **current design’s** pack via `PackSummary` (not the glyph manifest). Offer an about/licenses surface for the full allowlist.
 - Treat **CC-BY-SA** as a flagged class and surface it **before** Copy / Download with a persistent hint.
 - Add a pack by **ingest mapping + data**, not a new class in `src/adapters/browser`.
 - Keep the existing hexagonal boundaries, local-first model, Canvas 2D renderer, and PNG export sizes (48 / 128 / 256).
-- Preserve DesignDocument **version 1** unless codepoint meaning changes.
+- Preserve DesignDocument **version 2** unless codepoint meaning changes.
 
 ### Non-goals
 
@@ -107,11 +117,11 @@ Measured production JS (2026-08-27 `dist/assets/index-CG0aWfGM.js`): **42,659 ra
 
 ## Product invariant
 
-A favorite is a snapshot of **this** artwork, not “whatever 😀 looks like on this machine.”
+A project is a snapshot of **this** artwork, not “whatever 😀 looks like on this machine.”
 
 | Concept | Lives in | Lifetime |
 | --- | --- | --- |
-| Recipe identity | `DesignDocument.source`: `pack` + `packVersion` + optional `style` + `codepoint` + `grapheme` | As long as the document / favorite exists |
+| Recipe identity | `DesignDocument.source`: `pack` + `packVersion` + optional `style` + `codepoint` + `grapheme` | As long as the document / project exists |
 | Bytes for that identity | Write-once tree `packs/<id>/<ver>/[<style>/]` at `PackManifest.assetRoot` (not stored on the recipe; the version name is the pin) | Forever for that `packVersion`. A pixel change requires a new `packVersion`. |
 | Session default pack | Editor preference (`seemoji:pack-preference:v1`) | Until the user changes pack, version, or style in the selector |
 | Coverage | Pack manifest `glyphs` | Frozen with that snapshot version |
@@ -119,9 +129,9 @@ A favorite is a snapshot of **this** artwork, not “whatever 😀 looks like on
 
 Consequences:
 
-- Applying a favorite uses existing `replace-design` with `favorite.design`. The session pack **does not** change, and the recipe **is not** rewritten to the session pack.
+- Opening a project uses `load-design` with `project.design`. The session pack **does not** change, and the recipe **is not** rewritten to the session pack.
 - New picker clicks and paste build a ref from the **session** snapshot.
-- Footer / share-alike copy read the **design** pack, which can differ from the session pack (favorite from Twemoji while the picker is on Noto). That mismatch is allowed and expected after favorite apply and after boot (see [Boot](#boot-sequence)).
+- Footer / share-alike copy read the **design** pack, which can differ from the session pack (a Twemoji project while the picker is on Noto). That mismatch is allowed and expected after opening a project and after boot.
 - Pack / version / style switch of the open design is an explicit remap of the current grapheme, not a theme change.
 - Regenerating Twemoji 15.1.0 in a later ingest is **forbidden**. New pixels are a new `packVersion`.
 
@@ -154,8 +164,8 @@ flowchart TB
     CAT["EmojiPackCatalog<br/>list / get / hasGlyph / assetUrl / summaryFor"]
     PREF["PackPreferenceStore"]
     SESS["packSession — boot, remap, notices"]
-    RED["editorReducer set-source / replace-design"]
-    DOC["DesignDocumentV1"]
+    RED["editorReducer set-source / load-design"]
+    DOC["DesignDocumentV2"]
     RC["RenderCoordinator"]
     SRC["CanonicalPackSource"]
     CDN["Write-once stills at manifest.assetRoot"]
@@ -181,7 +191,7 @@ There is **no** `RegistryAssetSource` and **no** `urlTemplate` field in code. Th
 1. A published tree `packs/<id>/<version>/[<style>/]` is **write-once**. Changing any still, any glyph list, or `defaultStyle` requires a **new** `packVersion`.
 2. `PackManifest.assetRoot` is **per snapshot**, not a floating repo-level tag on `index.json`. Adding Noto must not rewrite Twemoji 15.1.0’s `assetRoot`.
 3. Git tags on the snapshot repo are **append-only**. Never force-push, never delete a tag that any shipped manifest points at. Keep old tags forever.
-4. `manifest.upstream.ref` records the exact upstream tag or SHA ingested for that version. Documents do **not** store that SHA (keeps DesignDocument v1).
+4. `manifest.upstream.ref` records the exact upstream tag or SHA ingested for that version. Documents do **not** store that SHA (keeps DesignDocument V2).
 5. `defaultStyle` on a version’s summary/manifest is frozen with that version. Omitted `style` on a recipe means “that pinned version’s default,” which cannot later change.
 
 Monorepo tag scheme: `vMAJOR.MINOR.PATCH` on `fluffypro/seemoji-packs` (same GitHub owner as this app; override in `pins.json` if the Pages-owning account differs).
@@ -431,7 +441,9 @@ New `src/domain/packCodec.ts` using the same `DecodeResult` posture as `designCo
 | Style not in pack | `get` / `assetUrl` fail; `hasGlyph` false. User-facing remap/paste copy uses `artworkMissingMessage` only for missing **glyphs**. Style errors use `No {name} artwork in the “{style}” style`. |
 | `hasGlyph` internals throw | Catch → `false`. |
 
-Do **not** fail-close the editor the way `LocalFavoritesRepository.list` fail-closes on corrupt favorites.
+Do **not** fail-close the editor because one project record is corrupt. The repository isolates
+decode failures per IndexedDB key, reports them through `WorkspaceSnapshot.issues`, and keeps every
+other valid project available.
 
 #### HTTP cache
 
@@ -479,7 +491,7 @@ const assets = new CanonicalPackSource({ catalog });
 
 UI components do not import jsDelivr, `twemojiSvgUrl`, or path helpers. They call `services.catalog.assetUrl` / `summaryFor` / `list`.
 
-Future Tauri: implement the same two ports against bundled files. `editorReducer`, `createRenderPlan`, `BrowserCanvasRenderer`, clipboard, and favorites do not change.
+Future Tauri: implement the same two ports against bundled files. `editorReducer`, `createRenderPlan`, `BrowserCanvasRenderer`, clipboard, and projects do not change.
 
 ### Session preference vs design source
 
@@ -525,7 +537,7 @@ export interface AppServices {
   readonly renderer: RenderCoordinator;
   readonly clipboard: ClipboardPort;
   readonly fileExport: FileExportPort;
-  readonly favorites: FavoritesRepository;
+  readonly workspace: WorkspaceController;
   readonly catalog: EmojiPackCatalog;
   readonly packPreference: PackPreferenceStore;
 }
@@ -539,16 +551,16 @@ export interface AppServices {
 
 On load:
 
-1. Render `INITIAL_EDITOR_STATE` immediately (Twemoji 😀). Do **not** block canvas on the catalog. Picker first paint is **full `CURATED`**, not an empty grid.
-2. In parallel with (3–4): `get({ pack: 'twemoji', packVersion: '15.1.0' })` via the unstyled path (no `list()` required). When that `hasGlyph` batch settles, omit uncovered cells. If it fails, keep full `CURATED`.
-3. `catalog.list()`. On failure: notice, hardcoded footer, hidden selector. Do **not** clear the picker; coverage from step 2 still applies.
+1. `WorkspaceController.load()` opens or creates the canonical active project. Editing remains gated until its strictly decoded design is available.
+2. In parallel, `get({ pack: 'twemoji', packVersion: '15.1.0' })` via the unstyled path. When the default coverage batch settles, omit uncovered curated cells. If it fails, keep full `CURATED`.
+3. `catalog.list()`. On failure: notice, hardcoded footer, hidden selector. Do **not** clear the picker; default coverage remains usable.
 4. `packPreference.read()`, then resolve against the list using the fail-open table.
 5. Set **selector / session snapshot** to that result.
-6. **Do not** `remapSource` / `set-source` the open `DEFAULT_DESIGN`. Returning visitors with a Noto preference see a Noto selector and a Twemoji preview until they change the selector or pick a cell. Footer follows the design (Twemoji). That mismatch is the same shape as a failed remap, but **silent on boot** so goldens and first paint stay stable.
+6. **Do not** remap the opened project's design on boot. A returning visitor may see a Noto selector with a Twemoji project until they explicitly change the selector or pick a cell. `DEFAULT_DESIGN` matters only when the workspace creates a new project.
 
 Remap of the open design happens only when the user **changes** pack, version, or style in the selector.
 
-`replace-design` from a favorite does **not** write `packPreference`. PR 4 UI can implement this without a product debate.
+`load-design` while opening a project does **not** write `packPreference`.
 
 ### Remap (pack / version / style switch of the open design)
 
@@ -669,30 +681,33 @@ Picker cells that survived the filter still go through `validateSource` on click
 
 This is an honesty mechanism, not legal advice.
 
-### Favorites
+### Projects
 
-No `Favorite` model change. Thumbnails already call `renderer.render(favorite.design, 64)`.
+Add no pack-specific fields to `Project`. Pack identity remains inside each emoji
+layer's `EmojiAssetRef`; revision, star, name, and timestamps stay pack-agnostic.
+Starred thumbnails already render `project.design` and catch failures.
 
 **Unknown-pack entries (required in PR 4, when `PACK_IDS` first grows):**
 
-`decodeFavorite` / `decodeDesignDocument` stay **strict** (`save()` depends on that). `list()` must not throw the whole store when one recipe’s `source.pack` is not in the running allowlist (rollback hostage).
+`decodeProject` / `decodeDesignDocument` stay strict. A rolled-back build can see a
+project whose design names a pack outside its allowlist. That record must be
+isolated without blocking valid projects and without being deleted or rewritten.
 
-Implementation in `LocalFavoritesRepository`:
+Implementation in `IndexedDbProjectRepository`:
 
-1. Parse the envelope (`version`, `favorites` array) as today.
-2. For each raw slot, peek `design.source.pack`.
-3. If `typeof pack === 'string' && pack.length > 0 && !isPackId(pack)` → **skip** for display, **keep the raw JSON** in an opaque side list. This covers rolled-back JS seeing a Noto favorite *and* hand-edited `apple`.
-4. Else `decodeFavorite`. Failure → throw `corrupt` as today (invalid blur, etc.).
-5. If any slots were skipped, the App notice is `Skipped N favorite(s) from an unknown pack.`
-6. `save` / `remove` persist `{ version: 1, favorites: [...opaqueRaw, ...displayable] }` so a skipped Noto recipe is **not wiped** when the user saves a Twemoji favorite on the rolled-back bundle.
-
-`FavoriteThumbnail` **must** `.catch()` render failures (missing snapshot tag, decode error) and leave the canvas blank. Today’s unhandled rejection becomes likely once old tags exist.
-
-Legacy `seemoji:favorites:v1` migration keeps `createEmojiAssetRef(grapheme, DEFAULT_PACK_SNAPSHOT)`.
+1. Continue reading each IndexedDB project record independently.
+2. Peek every emoji layer's `source.pack` before strict decoding.
+3. An unknown non-empty pack id is reported as an isolated unavailable record;
+   leave its raw IndexedDB record untouched.
+4. Saving another project writes only that project's key with revision CAS, so it
+   cannot erase an unavailable record.
+5. Surface `Skipped N project(s) from an unknown pack.` without blanking the workspace.
+6. Deletion remains explicit by id and expected revision; never clean unknown-pack
+   records as a side effect of listing or saving.
 
 ### What stays pack-agnostic
 
-`editorReducer`, `createRenderPlan`, `BrowserCanvasRenderer`, `BrowserClipboard`, `BrowserFileExport`, `RenderCoordinator` (aside from loading whatever `EmojiAssetSource` returns), and the favorites **model**. They consume `CanvasImageSource` and a versioned recipe. They must not branch on `source.pack`.
+`editorReducer`, `createRenderPlan`, `BrowserCanvasRenderer`, `BrowserClipboard`, `BrowserFileExport`, `RenderCoordinator` (aside from loading whatever `EmojiAssetSource` returns), and the projects **model**. They consume `CanvasImageSource` and a versioned recipe. They must not branch on `source.pack`.
 
 Pack orchestration (boot, preference resolve, remap, coverage paste, footer fallback) lives in `src/application/packSession.ts` if `App.tsx` pack logic would exceed ~80 lines. Still **no** new reducer actions. Do not add `set-pack`.
 
@@ -732,7 +747,7 @@ sequenceDiagram
 
 ### Domain — `src/domain/pack.ts` (new)
 
-PR 1 lands **`PACK_IDS = ['twemoji']` only**. Later PRs append ids. Do not land the full union in PR 1: a hand-edited `pack: 'noto'` favorite would persist with no bytes.
+PR 1 lands **`PACK_IDS = ['twemoji']` only**. Later PRs append ids. Do not land the full union in PR 1: a hand-edited `pack: 'noto'` project would persist with no bytes.
 
 ```ts
 export const PACK_IDS = ['twemoji'] as const; // grows in PRs 4–6
@@ -851,12 +866,12 @@ PR 1 tests:
 - `style: "flat"` kept.
 - `style: null` rejected.
 - `createEmojiAssetRef('😀')` does not own a `style` key.
-- Existing `seemoji:favorites:v2` fixtures round-trip.
+- Existing V2 projects with Twemoji emoji layers round-trip.
 - Illegal style string rejected.
 
-Bump to **v2** only if `codepoint` meaning changes or `style` becomes required.
-
-`migrateLegacyEditParams` emits `DEFAULT_PACK_SNAPSHOT`.
+The design is already V2. Keep V2 when adding optional `style`; bump only if
+codepoint meaning changes or style becomes required. V1 recipe promotion uses
+`DEFAULT_PACK_SNAPSHOT` for its single emoji layer.
 
 ### Ports
 
@@ -865,7 +880,7 @@ Bump to **v2** only if `codepoint` meaning changes or `style` becomes required.
 | `EmojiAssetSource` | `src/ports/emojiAssetSource.ts` | **No change.** |
 | `EmojiPackCatalog` | `src/ports/emojiPackCatalog.ts` | **New** (`list`, `get`, `hasGlyph`, `assetUrl`, `summaryFor`). |
 | `PackPreferenceStore` | `src/ports/packPreference.ts` | **New.** |
-| `RendererPort` / clipboard / favorites | existing | **No change** to the interface. `list()` implementation changes in PR 4 as above. |
+| `RendererPort` / clipboard / `ProjectRepository` / `WorkspaceSync` | existing | **No interface change.** PR 4 classifies unknown-pack project records without weakening strict decoders. |
 
 ### Application
 
@@ -893,7 +908,7 @@ Generalize `TwemojiAssetError` → `EmojiAssetError` with `ref` and `kind`: `'in
 - `EmojiPicker`: pack / version / style selects per the visibility table; filtered grid; `<img>` cells from `catalog.assetUrl`; `onerror` on imgs; existing paste form.
 - `App`: `packSession` + footer from `summaryFor` with hardcoded fallback; licenses dialog (PR 5).
 - `Preview`: persistent SA hint; Copy toast may append the SA clause; Download unchanged besides the hint.
-- `FavoritesBar`: `.catch()` thumbnail failures.
+- `StarredProjectsBar`: `.catch()` thumbnail failures.
 
 ### Catalog JSON
 
@@ -946,20 +961,35 @@ Generalize `TwemojiAssetError` → `EmojiAssetError` with `ref` and `kind`: `'in
 
 ### Design document
 
-No new `version`. Stored Fluent non-default style:
+No new `version`. A Fluent emoji layer with a non-default style:
 
 ```json
 {
-  "version": 1,
-  "source": {
-    "pack": "fluent",
-    "packVersion": "1.0.0",
-    "style": "flat",
-    "codepoint": "1f600",
-    "grapheme": "😀"
-  },
-  "transform": {},
-  "appearance": {}
+  "version": 2,
+  "canvas": { "background": null },
+  "layers": [{
+    "id": "emoji-primary",
+    "kind": "emoji",
+    "name": "Emoji",
+    "visible": true,
+    "opacity": 1,
+    "transform": {
+      "x": 0, "y": 0, "rotate": 0, "scaleX": 1, "scaleY": 1,
+      "skewX": 0, "skewY": 0, "flipH": false, "flipV": false
+    },
+    "mask": [],
+    "source": {
+      "pack": "fluent",
+      "packVersion": "1.0.0",
+      "style": "flat",
+      "codepoint": "1f600",
+      "grapheme": "😀"
+    },
+    "appearance": {
+      "hue": 0, "saturation": 1, "brightness": 1,
+      "blur": 0, "outline": null
+    }
+  }]
 }
 ```
 
@@ -977,7 +1007,7 @@ See [Session preference](#session-preference-vs-design-source). Not decoded by `
 | Index + manifests | `public/packs/` | yes, as static JSON | **no** |
 | SVG/PNG stills | write-once jsDelivr tag in `manifest.assetRoot` | **no** | **no** |
 | Session pack | `localStorage` | no | no |
-| Favorites | `localStorage` `seemoji:favorites:v2` | no | no |
+| Projects | IndexedDB `seemoji/projects` | no | no |
 
 Do not `import` glyph JSON into a chunk.
 
@@ -1009,7 +1039,7 @@ Not legal advice.
 Drive the picker (and possibly the canvas) with `@font-face` / `font-family: "Noto Color Emoji"`.
 
 - **For:** Tiny JS. System-like picker.
-- **Against:** COLRv1 / CBDT coverage is browser-dependent; canvas `fillText` rasterization is not a pinned SVG; Noto *fonts* are OFL; favorites would become “whatever this font file draws”; no Fluent *style*; e2e goldens would depend on font rasterizers (Firefox/WebKit already excluded from `@visual`). The picker today already uses system-font graphemes — that is the bug pack swapping would amplify.
+- **Against:** COLRv1 / CBDT coverage is browser-dependent; canvas `fillText` rasterization is not a pinned SVG; Noto *fonts* are OFL; projects would become “whatever this font file draws”; no Fluent *style*; e2e goldens would depend on font rasterizers (Firefox/WebKit already excluded from `@visual`). The picker today already uses system-font graphemes — that is the bug pack swapping would amplify.
 
 ### 2. One `EmojiAssetSource` class per pack (rejected)
 
@@ -1024,7 +1054,7 @@ A runtime dependency fights the budget; we would still pin license, version, and
 
 ### 4. Float `latest` pack versions (rejected)
 
-jsDelivr `@latest` would make favorites non-reproducible. The codec already requires pinned semver. `assetRoot` must not contain `@latest`. Session preference must not auto-upgrade a still-listed version.
+jsDelivr `@latest` would make projects non-reproducible. The codec already requires pinned semver. `assetRoot` must not contain `@latest`. Session preference must not auto-upgrade a still-listed version.
 
 ### 5. Import glyphs through the Vite JS graph (rejected)
 
@@ -1040,7 +1070,7 @@ Coverage is async and catalog-backed. Keep the reducer a pure document machine; 
 
 ### 8. Floating `index.json.assetRoot` (rejected)
 
-A repo-level tag that moves when Noto is added would retarget every Twemoji favorite’s pixels. Per-snapshot `PackManifest.assetRoot` plus write-once trees is the pin.
+A repo-level tag that moves when Noto is added would retarget every Twemoji project’s pixels. Per-snapshot `PackManifest.assetRoot` plus write-once trees is the pin.
 
 ## Security & Privacy Considerations
 
@@ -1053,7 +1083,7 @@ A repo-level tag that moves when Noto is added would retarget every Twemoji favo
 | Supply-chain / unexpected pack id | Medium | Frozen `PACK_IDS`; codec rejects others; ingest pins upstream `ref`. |
 | CORS leakage | Low | `mode: 'cors', credentials: 'omit'`. Catalog JSON is same-origin. |
 | Mixing share-alike pixels into a BY-only recipe | Medium | Remap writes a new `source.pack`; no pixel compositing across packs. |
-| Privacy | n/a | No accounts, no backend. jsDelivr sees glyph URLs. Preference and favorites stay in `localStorage`. |
+| Privacy | n/a | No accounts, no backend. jsDelivr sees glyph URLs. Pack preference stays in `localStorage`; projects stay in IndexedDB. |
 | Proprietary set smuggling | High | Allowlist + ingest review. No user-supplied CDN root in the UI. |
 
 No CSP is set in `index.html` today. **When one is added**, it must include:
@@ -1073,9 +1103,9 @@ No backend. Keep `Notice` in `App.tsx`.
 | --- | --- |
 | Coverage miss (paste / remap) | `kind: 'error'` with `artworkMissingMessage`. |
 | Catalog index failure | `kind: 'error'`; hardcoded footer; hidden selector. |
-| Network / decode failure | `EmojiAssetError`; Preview `Render failed: …`; favorite thumbnails catch and blank. |
+| Network / decode failure | `EmojiAssetError`; Preview `Render failed: …`; project thumbnails catch and blank. |
 | Share-alike | Persistent Preview hint; Copy toast may repeat it. |
-| Unknown-pack favorites | `Skipped N favorite(s) from an unknown pack.` |
+| Unknown-pack projects | `Skipped N project(s) from an unknown pack.` |
 | Corrupt pack preference | Fail open; no alert. |
 | Ingest | Non-zero exit if glyphs missing or write-once violated. |
 
@@ -1085,11 +1115,14 @@ Gate on **data**, not a flag service:
 
 1. PRs 1–2: `PACK_IDS = ['twemoji']`. Selector hidden (`list` length ≤ 1). Complete Twemoji glyph list from the ingest precursor. Paste of `A` is a coverage miss. Bytes still via `TwemojiCdnAssetSource`.
 2. PR 3: **merge gate = snapshot repo tag `v1.0.0` exists** and `manifest.assetRoot` is that host. `CanonicalPackSource` + PNG branch. e2e intercepts `assetRoot/**`. Delete `TwemojiCdnAssetSource`.
-3. PR 4: Noto + Fluent color. Selector appears. Picker `<img>`. Skip-unknown-pack `list()`. Default **first-visit** pack remains Twemoji. Boot does not remap `DEFAULT_DESIGN`.
+3. PR 4: Noto + Fluent color. Selector appears. Picker `<img>`. Classify unknown-pack IndexedDB project records without deleting them. Default **first-visit** pack remains Twemoji. Boot does not remap the active project.
 4. PR 5: OpenMoji (Unicode only) + persistent SA hint + licenses dialog.
 5. PR 6: long tail. Serenity uses the PNG path already in PR 3.
 
-**Rollback:** revert the Pages deploy. Twemoji-only JS cannot decode Noto recipes; PR 4 `list()` skips them and **keeps raw slots**, so a subsequent save does not wipe them. A pre-PR-4 rollback (no skip) would still hostage the store — that is why skip ships **in PR 4**, not as a follow-up.
+**Rollback:** revert the Pages deploy. Twemoji-only JS cannot decode Noto recipes;
+PR 4 leaves those IndexedDB records untouched and lists valid projects independently.
+Per-project CAS writes cannot wipe a skipped record. This classification ships in
+PR 4, before the first non-Twemoji project can exist.
 
 **e2e:** helper `mockArtwork(page, { assetRoot, manifests? })` (see [e2e](#e2e-intercepts)). Chromium `@visual` golden updates only if the **canvas** preview changes. Picker art must not dirty `default-preview.png` while `DEFAULT_DESIGN` is Twemoji 😀.
 
@@ -1097,13 +1130,17 @@ Gate on **data**, not a flag service:
 
 ### JS budget
 
-Verified: `scripts/check-bundle-budget.mjs` is 45,000 raw / 17,000 gzip-9 across all `dist/**/*.js`. Current `index-CG0aWfGM.js` is **42,659 / 15,678**. Headroom **2,341 / 1,322**.
+Current baseline: `scripts/check-bundle-budget.mjs` is **128,000 raw / 40,000
+gzip-9** across all `dist/**/*.js`; the workspace-recovery build is approximately
+**121,400 / 37,600**.
 
-Replacing `TwemojiCdnAssetSource` with `CanonicalPackSource` can be size-neutral. Catalog client + preference + remap + packSession + selects + `<img>` grid + licenses dialog **will not fit in 1.3 KB gzip**.
+Replacing `TwemojiCdnAssetSource` with `CanonicalPackSource` can be size-neutral. Catalog client + preference + remap + packSession + selects + `<img>` grid + licenses dialog will exceed the remaining baseline headroom.
 
-Pre-declared band for PRs 2–5: **~4–8 KB gzip / ~8–15 KB raw**.
+Expected band for PRs 2–5: **~4–8 KB gzip / ~8–15 KB raw** beyond the current baseline.
 
-In the first PR that fails `check:bundle` (expected: PR 2 or 4), raise the gate to **55,000 raw / 25,000 gzip-9** with a comment in `scripts/check-bundle-budget.mjs` citing this document and the measured delta. That ceiling is the policy; do not re-argue it per PR. Still fail if we exceed 25k gzip. **Never** recover budget by inlining glyph JSON.
+In the first pack PR that fails `check:bundle`, raise both limits only by the
+measured catalog/UI delta and document it beside the existing workspace-recovery baseline
+comment. **Never** recover budget by inlining glyph JSON.
 
 ### e2e intercepts
 
@@ -1156,14 +1193,14 @@ Rules:
 
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
-| JS budget overrun | High | Pre-authorized 55k/25k ceiling. No glyph JSON in JS. No new npm deps. |
-| Floating `assetRoot` retargeting favorites | High | Write-once trees; per-snapshot `assetRoot`; PR 3 merge gate. |
+| JS budget overrun | High | Measure from the 125k/40k workspace-recovery baseline. No glyph JSON in JS. |
+| Floating `assetRoot` retargeting projects | High | Write-once trees; per-snapshot `assetRoot`; PR 3 merge gate. |
 | CORS / content-type on the snapshot CDN | High | jsDelivr; e2e intercepts `assetRoot/**`. |
 | Catalog boot failure | Medium | Fail open; hardcoded footer; unstyled Twemoji `get()` still used for coverage so the picker is not emptied. |
 | Coverage holes | Medium | Manifest glyphs; omit uncovered cells; honest notice. |
 | Ingest bitrot | Medium | `pins.json`; CI stale-manifest check; `upstream.ref`. |
 | Share-alike user surprise | Medium | Persistent Preview hint; no 4 s toast as source of truth. |
-| Favorite list hard-fail on rollback | Medium | PR 4 `list()` skip + opaque persist. |
+| Project record unavailable after rollback | Medium | PR 4 classifies it independently and leaves the raw IndexedDB record untouched. |
 | Picker request storm / second fetch | Low | HTTP cache; img `onerror`; atlas follow-up. |
 | Session ≠ design on boot | Low | Accepted; footer follows design; remap only on selector change. |
 | 512 KiB cap vs later 3D PNG | Low | Per-manifest `maxAssetBytes`. |
@@ -1172,7 +1209,7 @@ Rules:
 
 ## Open Questions
 
-None remaining for implementation. Product choices that were previously listed here are Key Decisions (boot, no preference auto-upgrade, OpenMoji listed without a confirm dialog, omit uncovered cells, Fluent `color`, favorite apply does not move the selector, unknown-pack skip in `list()`).
+None remaining for implementation. Product choices that were previously listed here are Key Decisions (boot, no preference auto-upgrade, OpenMoji listed without a confirm dialog, omit uncovered cells, Fluent `color`, opening a project does not move the selector, and unknown-pack record isolation).
 
 ## Key Decisions
 
@@ -1180,22 +1217,22 @@ None remaining for implementation. Product choices that were previously listed h
 2. **One runtime loader.** `CanonicalPackSource` implements `EmojiAssetSource`. Filename maps live in `scripts/ingest/`.
 3. **Three layers: ingest / catalog / bytes.** UI never concatenates CDN URLs.
 4. **`assetUrl` is the only locator.** Loader and picker both call `EmojiPackCatalog.assetUrl`. No `RegistryAssetSource`, no `urlTemplate` type. PR 3 does not merge until a real `assetRoot` exists and e2e intercepts it.
-5. **Write-once bytes.** `packs/<id>/<ver>/[<style>/]` never changes; pixel edits are a new `packVersion`; `PackManifest.assetRoot` is per snapshot; git tags are append-only. This is what makes a favorite *this* artwork without storing a SHA on DesignDocument v1.
+5. **Write-once bytes.** `packs/<id>/<ver>/[<style>/]` never changes; pixel edits are a new `packVersion`; `PackManifest.assetRoot` is per snapshot; git tags are append-only. This is what makes a project *this* artwork without storing a SHA on DesignDocument V2.
 6. **Canonical key is today’s `toCodepoint`.** Grapheme in, lowercase dash-separated FE0F-stripped out. Fluent: `toCodepoint(metadata.glyph)` and `unicodeSkintones` hex → grapheme → `toCodepoint`; map `Default|Light|Medium-Light|Medium|Medium-Dark|Dark` in order. Do not invent `glyphSkintones`. Never pass a hex dump to `toCodepoint`.
-7. **DesignDocument stays v1.** Whitelist decoder; extra keys dropped; optional `style` omitted not nulled. Bump to v2 only if codepoint meaning changes or style becomes required.
-8. **Favorites snapshot artwork.** `replace-design` loads the stored source. Applying a favorite does **not** write the session preference.
+7. **DesignDocument stays V2.** Whitelist decoder; extra keys dropped; optional `style` omitted not nulled. Bump only if codepoint meaning changes or style becomes required.
+8. **Projects snapshot artwork.** `load-design` opens the stored source. Opening a project does **not** write the session preference.
 9. **Session pack is a preference.** `seemoji:pack-preference:v1` includes `style` when needed. Not in `editorReducer`.
-10. **Boot does not remap `DEFAULT_DESIGN`.** Preference applies to new picks and to the selector only. Goldens stay Twemoji 😀.
+10. **Boot does not remap the active project.** Preference applies to new picks and to the selector only. A new empty workspace still starts with Twemoji 😀.
 11. **No session auto-upgrade** of a still-listed `packVersion`. Version `<select>` is how a user moves 15.1.0 → 16.0.0. Retired versions fail open to that pack’s `defaultVersion`.
 12. **Remap is explicit and fail-visible.** Same grapheme; coverage check; on miss keep old `source` and notice. Style and version changes reuse `remapSource`.
 13. **Coverage is manifest data.** `hasGlyph` never throws. Uncovered curated cells are omitted **after** the first `hasGlyph` batch; first paint keeps full `CURATED`. Omitted-style `get()` tries the unstyled manifest path first (no `list()` required). Catalog index failure must not zero the picker if that default-pack manifest loaded. OpenMoji extras/PUA are not ingested.
 14. **User-facing missing-art copy** is `No ${PackSummary.name} ${packVersion} artwork exists for ${grapheme}` (`No Twemoji 15.1.0 artwork exists for A`).
-15. **Glyphs stay out of the JS graph.** Expected +4–8 KB gzip for PRs 2–5; pre-authorized budget **55,000 raw / 25,000 gzip-9**.
-16. **Picker shows pack art via `<img src={assetUrl}>`.** Canvas stays for edited preview and favorite thumbnails. Catch img and thumbnail failures.
+15. **Glyphs stay out of the JS graph.** Expected +4–8 KB gzip for PRs 2–5, measured from the **128,000 raw / 40,000 gzip-9** workspace-recovery baseline.
+16. **Picker shows pack art via `<img src={assetUrl}>`.** Canvas stays for edited preview and project thumbnails. Catch img and thumbnail failures.
 17. **Footer follows the design via `summaryFor` / `list()`,** never `get()` (no glyph download). Hardcoded Twemoji fallback until the index loads.
 18. **Share-alike honesty is a persistent Preview hint**, visible before click. The 4 s Copy toast is optional echo. BY packs: footer only. OpenMoji is listed; no extra confirm dialog.
 19. **Allowlist grows with ingest PRs.** PR 1 is `['twemoji']` only. Style∈pack is enforced in the catalog, not the codec.
-20. **Unknown-pack favorites:** `decodeFavorite` stays strict; `list()` skips `!isPackId` packs, notices, and **persists opaque raw slots** so rollback cannot wipe them. Required in PR 4.
+20. **Unknown-pack projects:** strict decoders stay strict; `IndexedDbProjectRepository` classifies the record as unavailable and leaves it untouched. Other per-project CAS writes cannot wipe it. Required in PR 4.
 21. **Stills only.** SVG/PNG. PNG content-type path ships in PR 3. `blob.size` cap; per-manifest `maxAssetBytes`.
 22. **`editorReducer` stays a document machine.** Pack policy in `remapSource` + `packSession`. Extract `packSession` if App pack logic exceeds ~80 lines. No `set-pack`.
 23. **Hexagonal ports hold.** Tauri replaces adapters, not the recipe.
@@ -1207,20 +1244,20 @@ None remaining for implementation. Product choices that were previously listed h
 ## References
 
 - `src/domain/emoji.ts` — `EmojiAssetRef`, `toCodepoint`, `createEmojiAssetRef`, `TWEMOJI_PACK_VERSION` (removed in PR 1)
-- `src/domain/design.ts` — `DesignDocumentV1`, `DEFAULT_DESIGN`, `resetDesign`
-- `src/domain/designCodec.ts` — whitelist `decodeSource`, `decodeDesignDocument`, `migrateLegacyEditParams`
-- `src/domain/favorite.ts` — recipe-only `Favorite`
+- `src/domain/design.ts` — `DesignDocumentV2`, `DEFAULT_DESIGN`, `resetDesign`
+- `src/domain/designCodec.ts` — whitelist `decodeSource`, V1 promotion, and `decodeDesignDocument`
+- `src/domain/project.ts` — canonical project identity, revision, metadata, and `DesignDocumentV2`
 - `src/domain/renderPlan.ts` — pack-agnostic planner
 - `src/ports/emojiAssetSource.ts` — `load(ref)`
 - `src/adapters/browser/twemojiAssetSource.ts` — current CDN loader, safety regexes, blob decode + revoke
-- `src/adapters/browser/localFavoritesRepository.ts` — fail-close `list()`, `save()` persists `list()` output today
-- `src/application/editor.ts` — `set-source`, `replace-design`
+- `src/adapters/browser/indexedDbProjectRepository.ts` — per-record decode isolation and revision CAS
+- `src/application/editor.ts` — `set-source`, `load-design`
 - `src/application/renderCoordinator.ts` — `validateSource`, `JSON.stringify(design)` LRU
 - `src/application/services.ts` — `AppServices`
 - `src/main.tsx` — composition root
-- `src/ui/App.tsx`, `EmojiPicker.tsx`, `FavoritesBar.tsx`, `Preview.tsx`
+- `src/ui/App.tsx`, `EmojiPicker.tsx`, `StarredProjectsBar.tsx`, `Preview.tsx`
 - `src/architecture.test.ts` — framework boundary
-- `scripts/check-bundle-budget.mjs` — 45,000 / 17,000 today
+- `scripts/check-bundle-budget.mjs` — 128,000 / 40,000 workspace-recovery baseline
 - `e2e/editor.spec.ts` — jsDelivr intercept, `/41.svg` 404, `No Twemoji`
 - `README.md`, `docs/deployment.md`, `docs/ci-strategy.md`
 - [jdecked/twemoji](https://github.com/jdecked/twemoji), [googlefonts/noto-emoji](https://github.com/googlefonts/noto-emoji), [microsoft/fluentui-emoji](https://github.com/microsoft/fluentui-emoji), [hfg-gmuend/openmoji](https://github.com/hfg-gmuend/openmoji), [mozilla/fxemoji](https://github.com/mozilla/fxemoji), SerenityOS `Base/res/emoji`
@@ -1231,7 +1268,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 
 ### PR 1 — Widen the asset ref and codec
 
-**Title:** `Allowlist EmojiAssetRef.pack and optional style on DesignDocument v1`
+**Title:** `Allowlist EmojiAssetRef.pack and optional style on DesignDocument V2`
 
 **Files / components:**
 
@@ -1239,7 +1276,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - `src/domain/emoji.ts` — `EmojiAssetRef.pack: PackId`, optional `style`, `createEmojiAssetRef(grapheme, snapshot?)`, delete `TWEMOJI_PACK_VERSION`, JSDoc on `toCodepoint`
 - `src/domain/emoji.test.ts`
 - `src/domain/design.ts` — `DEFAULT_DESIGN` via `DEFAULT_PACK_SNAPSHOT`
-- `src/domain/designCodec.ts` — allowlist + optional style; `style: null` rejected; extra keys still dropped; `version === 1`
+- `src/domain/designCodec.ts` — allowlist + optional style; `style: null` rejected; extra keys still dropped in both V1 promotion and native V2 decoding
 - `src/domain/designCodec.test.ts` — cases listed in the codec section
 - `src/application/editor.test.ts`
 - Call sites of `createEmojiAssetRef`
@@ -1266,7 +1303,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - `src/ui/App.tsx` — boot sequence (**no** remap of `DEFAULT_DESIGN`); footer via `summaryFor` with hardcoded fallback
 - `src/ui/EmojiPicker.tsx` — first paint full `CURATED`; after `hasGlyph` batch, omit uncovered cells (still system-font). Unstyled `get()` does not wait on `list()`.
 - `e2e/editor.spec.ts` — paste `A` asserts `No Twemoji`; keep jsDelivr intercept **and** `/41.svg` 404
-- `scripts/check-bundle-budget.mjs` — raise to 55k/25k if this PR fails the old gate, with RFC comment
+- `scripts/check-bundle-budget.mjs` — measure against the 128,000 raw / 40,000 gzip-9 workspace-recovery baseline and raise only with an itemized architectural justification
 
 **Depends on:** PR 1.
 
@@ -1299,9 +1336,9 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 
 **Description:** One URL shape, one loader, PNG-ready. Hosting is a merge gate, not a PR-description hope.
 
-### PR 4 — Noto SVG + Fluent color, pack picker art, rollback-safe favorites
+### PR 4 — Noto SVG + Fluent color, pack picker art, rollback-safe projects
 
-**Title:** `Add Noto and Fluent (color) packs, pack-art picker, and unknown-pack favorite skipping`
+**Title:** `Add Noto and Fluent (color) packs, pack-art picker, and unknown-pack project skipping`
 
 **Files / components:**
 
@@ -1310,9 +1347,9 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - `public/packs/index.json` + manifests; Fluent `styles: ['color']`, `defaultStyle: 'color'` (no style `<select>`)
 - New snapshot tag e.g. `v1.1.0`; **do not** rewrite Twemoji 15.1.0 `assetRoot`
 - `src/ui/EmojiPicker.tsx` — pack `<select>` + version `<select>` if needed; `<img>` from `assetUrl`; `onerror`; CSS stacking at 390px
-- `src/application/packSession.ts` — selector change → remap; boot still does not remap `DEFAULT_DESIGN`
-- `src/adapters/browser/localFavoritesRepository.ts` — skip `!isPackId` slots, notice, persist opaque raw; tests that `save()` does not drop them
-- `src/ui/FavoritesBar.tsx` — `.catch()` thumbnail render
+- `src/application/packSession.ts` — selector change → remap; boot does not remap the opened project
+- `src/adapters/browser/indexedDbProjectRepository.ts` — classify unknown-pack records, leave raw records untouched, and prove unrelated revision-CAS saves do not drop them
+- `src/ui/StarredProjectsBar.tsx` — `.catch()` thumbnail render
 - `src/index.css` — selects `width: 100%; min-width: 0`; wrap; overflow invariant
 - `e2e/editor.spec.ts` — `mockArtwork` + `page.route('**/packs/noto/**/manifest.json', …)` for a stub that omits a glyph; assert design unchanged; intercept both packs’ `assetRoot/**`
 - `src/domain/designCodec.test.ts` — Noto/Fluent documents round-trip
@@ -1320,7 +1357,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 
 **Depends on:** PR 3.
 
-**Description:** First user-visible swap. Default first visit remains Twemoji. Favorite apply does not write preference. Skip-unknown-pack is **in this PR**, not a follow-up.
+**Description:** First user-visible swap. Default first visit remains Twemoji. Opening a project does not write preference. Unknown-pack record isolation is **in this PR**, not a follow-up.
 
 ### PR 5 — OpenMoji (Unicode only) and share-alike hint
 
