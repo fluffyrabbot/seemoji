@@ -644,24 +644,12 @@ test('coordinates two tabs and preserves simultaneous edits as a conflict copy',
   await expect(page.getByText('Conflict edit', { exact: true })).toBeVisible();
   await expect(second.getByRole('heading', { name: 'Resolve concurrent edits' })).toBeVisible();
 
-  await Promise.all([
-    page.getByRole('button', { name: 'Keep both' }).dispatchEvent('click'),
-    second.getByRole('button', { name: 'Keep original' }).dispatchEvent('click'),
-  ]);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const remaining = await page.getByRole('button', { name: 'Keep both' }).count();
-    if (remaining === 0) break;
-    await page.getByRole('button', { name: 'Keep both' }).first().click();
-    await expect.poll(() => page.getByRole('button', { name: 'Keep both' }).count())
-      .toBeLessThan(remaining);
-  }
+  await page.getByRole('button', { name: 'Keep both' }).click();
   await expect(page.getByRole('heading', { name: 'Resolve concurrent edits' })).toHaveCount(0);
-  await expect(second.getByRole('heading', { name: 'Resolve concurrent edits' })).toHaveCount(0);
   const resolvedNames = (await page.getByLabel('Open project').locator('option').allTextContents())
     .filter((name) => name !== 'Open…');
   expect(resolvedNames).not.toContainEqual(expect.stringContaining('(conflict copy)'));
-  expect(resolvedNames.length).toBeGreaterThanOrEqual(1);
-  expect(resolvedNames.length).toBeLessThanOrEqual(2);
+  expect(resolvedNames).toHaveLength(2);
   await second.close();
 });
 
@@ -691,7 +679,7 @@ test('coordinates tabs through storage invalidation when BroadcastChannel is una
   await second.close();
 });
 
-test('has no horizontal overflow and prioritizes preview on a narrow screen', async ({ page }) => {
+test('prioritizes the preview and keeps every editor panel one tap away on a narrow screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const layout = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
@@ -701,4 +689,20 @@ test('has no horizontal overflow and prioritizes preview on a narrow screen', as
   }));
   expect(layout.scrollWidth).toBe(layout.viewportWidth);
   expect(layout.previewTop).toBeLessThan(layout.pickerTop ?? 0);
+
+  const tabs = page.getByRole('radiogroup', { name: 'Editing panels' });
+  await expect(tabs).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Emoji' })).toBeChecked();
+  await tabs.getByText('Layers', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Layers' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pick an emoji' })).toBeHidden();
+  await tabs.getByText('Adjust', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Adjust' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Layers' })).toBeHidden();
+  const panelGap = await page.evaluate(() => {
+    const tabsRect = document.querySelector('.editor-panel-tabs')!.getBoundingClientRect();
+    const controlsRect = document.querySelector('.controls-region')!.getBoundingClientRect();
+    return Math.round(controlsRect.top - tabsRect.bottom);
+  });
+  expect(panelGap).toBeLessThanOrEqual(40);
 });

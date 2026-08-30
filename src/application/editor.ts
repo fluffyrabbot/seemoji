@@ -69,7 +69,6 @@ export type EditorAction =
   | { readonly type: 'commit-history-group' }
   | { readonly type: 'undo' }
   | { readonly type: 'redo' }
-  | { readonly type: 'restore-history'; readonly index: number }
   | { readonly type: 'set-size'; readonly size: ExportSize }
   | { readonly type: 'reset' };
 
@@ -366,13 +365,6 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         historyGroup: null,
         selectedLayerIds: validSelection(design, state.selectedLayerIds),
       };
-    }
-    case 'restore-history': {
-      if (!Number.isInteger(action.index) || action.index < 0 || action.index >= state.past.length) return state;
-      const design = state.past[action.index]!;
-      return { ...state, design, past: state.past.slice(0, action.index),
-        future: [...state.past.slice(action.index + 1), state.design, ...state.future],
-        historyGroup: null, selectedLayerIds: validSelection(design, state.selectedLayerIds) };
     }
     case 'set-size':
       return { ...state, exportSize: action.size, historyGroup: null };

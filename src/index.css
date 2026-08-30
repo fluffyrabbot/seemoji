@@ -159,6 +159,7 @@ input[type='text'], input[type='number'], input:not([type]), select {
 .picker-region { grid-area: picker; min-width: 0; }
 .controls-region { grid-area: controls; min-width: 0; }
 .preview-region { grid-area: preview; min-width: 0; }
+.editor-panel-tabs { display: none; grid-area: mobile-tabs; }
 
 .panel {
   border: 1px solid #343640;
@@ -636,10 +637,45 @@ input[type='text'], input[type='number'], input:not([type]), select {
   .project-actions { justify-content: start; }
   .app-header p { font-size: 0.85rem; }
   .editor-layout {
-    grid-template-areas: "preview" "picker" "controls";
+    grid-template-areas: "preview" "mobile-tabs" "picker" "controls";
     grid-template-columns: minmax(0, 1fr);
     padding-inline: 0.75rem;
   }
+  .editor-panel-tabs {
+    position: sticky;
+    z-index: 8;
+    top: 0.5rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.3rem;
+    border: 1px solid #3e414d;
+    border-radius: 12px;
+    background: #181a20ee;
+    padding: 0.35rem;
+    box-shadow: 0 8px 24px #0007;
+    backdrop-filter: blur(12px);
+  }
+  .panel-tab-input { position: absolute; opacity: 0; pointer-events: none; }
+  .editor-panel-tabs label {
+    display: grid;
+    place-items: center;
+    min-height: 42px;
+    border: 1px solid #454855;
+    border-radius: 8px;
+    background: #2b2d36;
+    cursor: pointer;
+  }
+  .panel-tab-input:focus-visible + label { outline: 3px solid #7c87ffa6; outline-offset: 2px; }
+  .panel-tab-input:checked + label {
+    border-color: #7a83f7;
+    background: #5865f2;
+    font-weight: 700;
+  }
+  .editor-layout:has(#emoji-tab:checked) .layers-panel-shell,
+  .editor-layout:has(#layers-tab:checked) .emoji-panel-shell,
+  .editor-layout:has(#adjust-tab:checked) .picker-region,
+  .editor-layout:not(:has(#adjust-tab:checked)) .controls-region { display: none; }
+  .editor-layout:has(#layers-tab:checked) .layers-panel { margin-top: 0; }
   .preview-stage { min-height: auto; }
   .preview-viewport { width: min(88vw, 460px); }
   .canvas-world { width: 100%; }

@@ -615,9 +615,21 @@ export default function App({ services }: Props) {
       />
 
       <main className="editor-layout">
+        <div className="editor-panel-tabs" role="radiogroup" aria-label="Editing panels">
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="emoji-tab"
+            defaultChecked />
+          <label htmlFor="emoji-tab">Emoji</label>
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="layers-tab" />
+          <label htmlFor="layers-tab">Layers</label>
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="adjust-tab" />
+          <label htmlFor="adjust-tab">Adjust</label>
+        </div>
         <section className="picker-region" aria-label="Emoji source">
-          <EmojiPicker emoji={getEmojiLayer(editor.design).source.grapheme} onPick={selectEmoji} />
-          <LayersPanel
+          <div className="emoji-panel-shell">
+            <EmojiPicker emoji={getEmojiLayer(editor.design).source.grapheme} onPick={selectEmoji} />
+          </div>
+          <div className="layers-panel-shell">
+            <LayersPanel
             design={editor.design}
             selectedLayerIds={editor.selectedLayerIds}
             onSelect={(layerId, toggle) => toggle
@@ -652,7 +664,8 @@ export default function App({ services }: Props) {
             onDuplicateSelection={duplicateSelection}
             onGroup={groupSelection}
             onUngroup={ungroupSelection}
-          />
+            />
+          </div>
         </section>
 
         <section className="preview-region" aria-label="Canvas and export">
