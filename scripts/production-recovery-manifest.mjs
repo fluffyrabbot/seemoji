@@ -1,5 +1,6 @@
 import {
   assertDocumentHeaders,
+  RECOVERY_DOCUMENT_POLICIES,
   verifyDeployedRelease,
 } from './check-deployed-headers.mjs';
 import {
@@ -105,10 +106,13 @@ const fetchLegacyDocument = async (fetchImpl, deployment, path) => {
 export function validateProductionRecoveryManifest(value) {
   exactKeys(
     value,
-    ['schemaVersion', 'deployment', 'releaseManifest'],
+    ['schemaVersion', 'deployment', 'documentPolicy', 'releaseManifest'],
     'Production recovery manifest',
   );
-  if (value.schemaVersion !== 2) fail('Production recovery manifest schema is unsupported');
+  if (value.schemaVersion !== 3) fail('Production recovery manifest schema is unsupported');
+  if (!RECOVERY_DOCUMENT_POLICIES.includes(value.documentPolicy)) {
+    fail('Production recovery document policy is unsupported');
+  }
   validateDeploymentIdentity(value.deployment);
   validateReleaseManifest(value.releaseManifest, value.deployment.commit);
   return value;
@@ -131,15 +135,25 @@ export async function captureProductionRecoveryManifest({
     );
   }
 
-  try {
-    await verifyDeployedRelease(deployment.url, releaseManifest, 1, fetchImpl);
-  } catch (error) {
-    fail(`Canonical production failed exact recovery capture: ${error.message}`);
+  let documentPolicy;
+  let policyError;
+  for (const candidate of RECOVERY_DOCUMENT_POLICIES) {
+    try {
+      await verifyDeployedRelease(deployment.url, releaseManifest, 1, fetchImpl, undefined, candidate);
+      documentPolicy = candidate;
+      break;
+    } catch (error) {
+      policyError = error;
+    }
+  }
+  if (!documentPolicy) {
+    fail(`Canonical production failed exact recovery capture: ${policyError.message}`);
   }
 
   return validateProductionRecoveryManifest({
-    schemaVersion: 2,
+    schemaVersion: 3,
     deployment,
+    documentPolicy,
     releaseManifest,
   });
 }
@@ -178,6 +192,7 @@ export async function verifyProductionRecoveryManifest({
     attempts,
     fetchImpl,
     waitImpl,
+    expected.documentPolicy,
   );
   return expected;
 }

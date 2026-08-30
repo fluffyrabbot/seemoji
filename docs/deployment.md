@@ -120,8 +120,11 @@ After environment approval, the `deploy` job:
 4. Verifies the preview's exact commit, HTML entrypoints, public-file digests,
    MIME types, security policy, document revalidation, and immutable asset cache.
 5. Reads the project's canonical production deployment, requires its full
-   commit-bound release manifest, and verifies every listed public file. Only the
-   explicitly guarded one-time bootstrap described above can replace this step.
+   commit-bound release manifest, verifies every listed public file, and records
+   the exact allowlisted document-header policy used by that release. This keeps
+   an intentional CSP migration from making the preceding release unverifiable.
+   Only the explicitly guarded one-time bootstrap described above can replace
+   this step.
 6. Persists `recovery.json` and the trusted previous `release-manifest.json` in a
    30-day GitHub artifact named
    `seemoji-production-recovery-<run-id>-<deployment-id>`.
@@ -134,6 +137,11 @@ After environment approval, the `deploy` job:
 The Cloudflare account ID and API token are attached only to the project lookup,
 deployment listing, upload, and rollback steps. Build scripts, tests, artifact
 actions, and public HTTP verification do not receive them.
+
+`recovery.json` schema 3 names the previous release's document policy. Candidate
+preview and production verification always require the current exact policy;
+rollback verification requires the exact recorded predecessor policy. This is a
+bounded compatibility contract, not a permissive CSP fallback.
 
 ## Release manifest and delivery policy
 

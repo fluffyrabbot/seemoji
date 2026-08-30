@@ -8,7 +8,11 @@ import {
   validateReleaseManifest,
 } from './release-manifest.mjs';
 
-const EXPECTED_CSP = new Map([
+export const CURRENT_DOCUMENT_POLICY = 'pack-cdn-v1';
+export const RECOVERY_DOCUMENT_POLICIES = [CURRENT_DOCUMENT_POLICY, 'pre-pack-cdn-v1'];
+
+const CSP_POLICIES = new Map([
+  [CURRENT_DOCUMENT_POLICY, new Map([
   ['default-src', ["'self'"]],
   ['base-uri', ["'none'"]],
   ['connect-src', ["'self'", 'https://cdn.jsdelivr.net']],
@@ -18,6 +22,18 @@ const EXPECTED_CSP = new Map([
   ['object-src', ["'none'"]],
   ['script-src', ["'self'"]],
   ['style-src', ["'self'"]],
+  ])],
+  ['pre-pack-cdn-v1', new Map([
+    ['default-src', ["'self'"]],
+    ['base-uri', ["'none'"]],
+    ['connect-src', ["'self'", 'https://cdn.jsdelivr.net']],
+    ['form-action', ["'self'"]],
+    ['frame-ancestors', ["'none'"]],
+    ['img-src', ["'self'", 'blob:', 'data:']],
+    ['object-src', ["'none'"]],
+    ['script-src', ["'self'"]],
+    ['style-src', ["'self'"]],
+  ])],
 ]);
 
 const EXPECTED_DISABLED_FEATURES = [
@@ -84,14 +100,16 @@ export function findModuleAssetPath(html) {
   return findEntrypoints(html).modules[0];
 }
 
-export function assertDocumentHeaders(headers) {
+export function assertDocumentHeaders(headers, policy = CURRENT_DOCUMENT_POLICY) {
+  const expectedCsp = CSP_POLICIES.get(policy);
+  if (!expectedCsp) fail(`Unknown document header policy: ${policy}`);
   const cspValue = headers.get('content-security-policy');
   if (!cspValue) fail('Missing Content-Security-Policy');
   const actualCsp = parseCsp(cspValue);
-  if (actualCsp.size !== EXPECTED_CSP.size) {
+  if (actualCsp.size !== expectedCsp.size) {
     fail('Content-Security-Policy has missing or unexpected directives');
   }
-  for (const [directive, expectedSources] of EXPECTED_CSP) {
+  for (const [directive, expectedSources] of expectedCsp) {
     const actualSources = actualCsp.get(directive);
     if (!actualSources || !sameSet(actualSources, new Set(expectedSources))) {
       fail(`Content-Security-Policy ${directive} is not the exact release policy`);
@@ -165,7 +183,7 @@ const canonicalManifest = (manifest) => JSON.stringify({
   })),
 });
 
-const verify = async (baseUrl, expectedManifest, fetchImpl) => {
+const verify = async (baseUrl, expectedManifest, fetchImpl, documentPolicy) => {
   const cacheBuster = expectedManifest.commit;
   const manifestUrl = new URL(RELEASE_MANIFEST_PATH, baseUrl);
   manifestUrl.searchParams.set('deployment-check', cacheBuster);
@@ -183,7 +201,7 @@ const verify = async (baseUrl, expectedManifest, fetchImpl) => {
   const documentUrl = new URL('/', baseUrl);
   documentUrl.searchParams.set('deployment-check', cacheBuster);
   const documentResponse = await fetchReleaseFile(fetchImpl, documentUrl);
-  assertDocumentHeaders(documentResponse.headers);
+  assertDocumentHeaders(documentResponse.headers, documentPolicy);
   assertContentType('/index.html', documentResponse.headers);
   const documentBytes = new Uint8Array(await documentResponse.arrayBuffer());
   const documentFile = manifest.files.find((file) => file.path === '/index.html');
@@ -234,12 +252,13 @@ export async function verifyDeployedRelease(
   attempts = 10,
   fetchImpl = fetch,
   waitImpl = wait,
+  documentPolicy = CURRENT_DOCUMENT_POLICY,
 ) {
   const verifiedManifest = validateReleaseManifest(expectedManifest);
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await verify(baseUrl, verifiedManifest, fetchImpl);
+      return await verify(baseUrl, verifiedManifest, fetchImpl, documentPolicy);
     } catch (error) {
       lastError = error;
       if (attempt < attempts) await waitImpl(2_000);

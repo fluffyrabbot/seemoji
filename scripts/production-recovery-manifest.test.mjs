@@ -14,6 +14,7 @@ import { sha256 } from './release-manifest.mjs';
 const COMMIT = 'a'.repeat(40);
 const DEPLOYMENT_ID = '12345678-1234-1234-1234-123456789abc';
 const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data: https://cdn.jsdelivr.net; object-src 'none'; script-src 'self'; style-src 'self'";
+const LEGACY_CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self'; style-src 'self'";
 const html = '<!doctype html><link rel="icon" href="/favicon.svg">'
   + '<link rel="stylesheet" href="/assets/app.css">'
   + '<script type="module" src="/assets/app.js"></script>';
@@ -37,9 +38,12 @@ const releaseManifest = {
   })),
 };
 
-const documentHeaders = (contentType = 'text/html; charset=utf-8') => new Headers({
+const documentHeaders = (
+  contentType = 'text/html; charset=utf-8',
+  contentSecurityPolicy = CSP,
+) => new Headers({
   'cache-control': 'public, max-age=0, must-revalidate',
-  'content-security-policy': CSP,
+  'content-security-policy': contentSecurityPolicy,
   'content-type': contentType,
   'permissions-policy': 'accelerometer=(), autoplay=(), browsing-topics=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), serial=(), usb=()',
   'referrer-policy': 'strict-origin-when-cross-origin',
@@ -58,11 +62,15 @@ const fileHeaders = (path) => {
     'content-type': path.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8',
   });
 };
-const deployedFetch = ({ bodyOverrides = new Map(), manifestResponse } = {}) => async (input) => {
+const deployedFetch = ({
+  bodyOverrides = new Map(),
+  manifestResponse,
+  contentSecurityPolicy = CSP,
+} = {}) => async (input) => {
   const path = new URL(input).pathname;
   if (path === '/release-manifest.json') {
     return manifestResponse ?? new Response(JSON.stringify(releaseManifest), {
-      headers: documentHeaders('application/json'),
+      headers: documentHeaders('application/json', contentSecurityPolicy),
     });
   }
   const releasePath = path === '/' ? '/index.html' : path;
@@ -71,7 +79,9 @@ const deployedFetch = ({ bodyOverrides = new Map(), manifestResponse } = {}) => 
     : fileBodies.get(releasePath);
   if (body === undefined) return new Response('not found', { status: 404 });
   return new Response(body, {
-    headers: releasePath === '/index.html' ? documentHeaders() : fileHeaders(releasePath),
+    headers: releasePath === '/index.html'
+      ? documentHeaders(undefined, contentSecurityPolicy)
+      : fileHeaders(releasePath),
   });
 };
 const canonicalDeployment = {
@@ -85,7 +95,8 @@ test('captures the full canonical release manifest and verifies every public fil
     canonicalDeployment,
     fetchImpl: deployedFetch(),
   });
-  assert.equal(manifest.schemaVersion, 2);
+  assert.equal(manifest.schemaVersion, 3);
+  assert.equal(manifest.documentPolicy, 'pack-cdn-v1');
   assert.equal(manifest.deployment.id, DEPLOYMENT_ID);
   assert.equal(manifest.deployment.commit, COMMIT);
   assert.deepEqual(
@@ -97,6 +108,26 @@ test('captures the full canonical release manifest and verifies every public fil
     manifest,
     fetchImpl: deployedFetch(),
   }));
+});
+
+test('captures and exactly re-verifies the preceding document policy', async () => {
+  const fetchImpl = deployedFetch({ contentSecurityPolicy: LEGACY_CSP });
+  const manifest = await captureProductionRecoveryManifest({
+    canonicalDeployment,
+    fetchImpl,
+  });
+  assert.equal(manifest.documentPolicy, 'pre-pack-cdn-v1');
+  await assert.doesNotReject(verifyProductionRecoveryManifest({
+    baseUrl: 'https://seemoji.pages.dev/',
+    manifest,
+    fetchImpl,
+  }));
+  await assert.rejects(verifyProductionRecoveryManifest({
+    baseUrl: 'https://seemoji.pages.dev/',
+    manifest,
+    fetchImpl: deployedFetch(),
+    attempts: 1,
+  }), /img-src is not the exact release policy/);
 });
 
 test('persists both the recovery envelope and standalone trusted release manifest', async () => {
