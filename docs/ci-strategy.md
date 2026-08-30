@@ -117,7 +117,15 @@ Every external workflow action is pinned to a reviewed full commit SHA from a
 Node 24-native release, with the human-readable release beside the pin. The
 delivery-policy suite rejects floating tags, unknown actions, stale pins, and
 workflow-specific Node versions; all jobs consume the repository's exact
-`.node-version` instead.
+`.node-version` instead. Every job also names the Ubuntu 24.04 runner family;
+`ubuntu-latest` is forbidden so an operating-system family migration cannot
+arrive implicitly.
+
+The read-only `Workflow platform audit` runs every Monday and on manual dispatch.
+It resolves each approved action's latest official GitHub release and commit,
+reads both the approved and latest `action.yml`, and fails when a pin is stale or
+either runtime is outside the reviewed Node 24 action runtime. It never edits a
+workflow or opens a pull request; adoption remains an explicit reviewed change.
 
 Only the dependent `deploy` job enters the protected `production` environment.
 It downloads and re-verifies the artifact, and Cloudflare credentials are scoped

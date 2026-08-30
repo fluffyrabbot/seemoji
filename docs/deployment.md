@@ -15,7 +15,9 @@ workflow artifact. The protected deployment job downloads and re-verifies those
 same bytes before Cloudflare credentials are made available to individual steps.
 All external actions are full-SHA pinned to reviewed Node 24-native releases;
 `scripts/workflow-action-policy.test.mjs` prevents a floating tag or unreviewed
-action revision from entering any workflow.
+action revision from entering any workflow. The same policy fixes every job to
+the Ubuntu 24.04 runner family, while the scheduled read-only platform audit
+reports new official action releases and inspects their runtime before adoption.
 
 ## Release invariants
 
