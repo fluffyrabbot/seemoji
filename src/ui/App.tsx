@@ -31,6 +31,7 @@ import ProjectBar from './ProjectBar';
 import Preview, { type BrushSettings, type CanvasSettings, type EditorTool } from './Preview';
 import StarredProjectsBar from './StarredProjectsBar';
 import WorkspaceRecoveryPanel from './WorkspaceRecoveryPanel';
+import WorkspaceMenu from './WorkspaceMenu';
 
 export type Notice = {
   readonly kind: 'status' | 'error';
@@ -74,6 +75,7 @@ export default function App({ services }: Props) {
   const noticeTimer = useRef<number | undefined>(undefined);
   const layerClipboard = useRef<readonly SceneLayer[]>([]);
   const workspaceReady = useRef(false);
+  const conflictPanelRef = useRef<HTMLDivElement>(null);
 
   const showNotice = useCallback((next: Notice) => {
     window.clearTimeout(noticeTimer.current);
@@ -90,9 +92,6 @@ export default function App({ services }: Props) {
     const unsubscribe = services.workspace.subscribeStatus((status) => {
       if (!active) return;
       setPersistenceStatus(status);
-      if (status === 'conflict') {
-        showNotice({ kind: 'error', message: 'Concurrent edits were preserved for resolution.' });
-      }
     });
     const unsubscribeWorkspace = services.workspace.subscribeWorkspace((workspace) => {
       if (!active) return;
@@ -222,9 +221,13 @@ export default function App({ services }: Props) {
 
   const deleteProject = async () => {
     if (!currentProjectId) return;
+    const name = projectName.trim() || 'Untitled design';
+    if (!window.confirm(
+      `Delete “${name}”? This permanently removes the local project and cannot be undone.`,
+    )) return;
     try {
       applyWorkspace(await services.workspace.deleteActive());
-      showNotice({ kind: 'status', message: 'Project deleted.' });
+      showNotice({ kind: 'status', message: `Deleted “${name}”.` });
     } catch (cause) {
       showNotice({ kind: 'error', message: `Could not delete project: ${String(cause)}` });
     }
@@ -402,6 +405,12 @@ export default function App({ services }: Props) {
   const presentedProjects = useMemo(() => projects.map((project) => project.id === currentProjectId
     ? { ...project, name: projectName.trim() || 'Untitled design', design: editor.design }
     : project), [currentProjectId, editor.design, projectName, projects]);
+  const hasConflicts = presentedProjects.some((project) => project.conflict !== null);
+
+  const reviewConflicts = () => {
+    conflictPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    conflictPanelRef.current?.focus({ preventScroll: true });
+  };
 
   const expandGroupedSelection = (ids: readonly string[]) => [...new Set(ids.flatMap((id) =>
     selectionGroups.find((group) => group.includes(id)) ?? [id]))];
@@ -563,21 +572,44 @@ export default function App({ services }: Props) {
 
       <ProjectBar name={projectName} projects={presentedProjects} currentId={currentProjectId}
         persistenceStatus={persistenceStatus}
-        starred={presentedProjects.find((project) => project.id === currentProjectId)?.starredAt != null}
-        historyLength={editor.past.length}
-        onNameChange={setProjectName} onNew={() => void newProject()} onFlush={() => void saveNow()}
-        onToggleStar={() => void toggleStar()} onOpen={(id) => void openProject(id)}
-        onDelete={() => void deleteProject()} onExport={exportProject}
-        onImport={(file) => void importProject(file)}
-        onRestoreHistory={(index) => dispatch({ type: 'restore-history', index })} />
+        onNameChange={setProjectName} onNew={() => void newProject()}
+        onOpen={(id) => void openProject(id)}
+        menu={<WorkspaceMenu
+          starred={presentedProjects.find((project) => project.id === currentProjectId)?.starredAt != null}
+          storageHealth={storageHealth}
+          busy={recoveryBusy}
+          onSaveNow={() => void saveNow()}
+          onToggleStar={() => void toggleStar()}
+          onDelete={() => void deleteProject()}
+          onExportProject={exportProject}
+          onImportProject={(file) => void importProject(file)}
+          onExportWorkspace={() => void exportWorkspaceArchive()}
+          onImportWorkspace={(file) => void importWorkspaceArchive(file)}
+          onRequestPersistence={() => void requestPersistentStorage()}
+        />} />
+
+      {hasConflicts && (
+        <section className="workspace-status-banner conflict" role="alert">
+          <div>
+            <strong>Concurrent edits are safe.</strong>
+            <span>Compare the preserved versions and choose what to keep.</span>
+          </div>
+          <button type="button" onClick={reviewConflicts}>Review versions</button>
+        </section>
+      )}
+      {persistenceStatus === 'error' && (
+        <section className="workspace-status-banner error" role="alert">
+          <div>
+            <strong>Local changes could not be saved.</strong>
+            <span>Your editor remains open. Try the save again before closing this tab.</span>
+          </div>
+          <button type="button" onClick={() => void saveNow()}>Try saving again</button>
+        </section>
+      )}
 
       <WorkspaceRecoveryPanel
-        health={storageHealth}
         issues={workspaceIssues}
         busy={recoveryBusy}
-        onRequestPersistence={() => void requestPersistentStorage()}
-        onExport={() => void exportWorkspaceArchive()}
-        onImport={(file) => void importWorkspaceArchive(file)}
         onExportQuarantined={(record) => void exportQuarantinedRecord(record)}
         onPurgeQuarantined={(record) => void purgeQuarantinedRecord(record)}
       />
@@ -651,11 +683,15 @@ export default function App({ services }: Props) {
             onSizeChange={(size) => dispatch({ type: 'set-size', size })}
             onNotice={showNotice}
           />
-          <ConflictResolutionPanel
-            projects={presentedProjects}
-            renderer={services.renderer}
-            onResolve={(id, resolution) => void resolveProjectConflict(id, resolution)}
-          />
+          {hasConflicts && (
+            <div ref={conflictPanelRef} tabIndex={-1} className="conflict-resolution-anchor">
+              <ConflictResolutionPanel
+                projects={presentedProjects}
+                renderer={services.renderer}
+                onResolve={(id, resolution) => void resolveProjectConflict(id, resolution)}
+              />
+            </div>
+          )}
           <StarredProjectsBar
             projects={presentedProjects}
             renderer={services.renderer}

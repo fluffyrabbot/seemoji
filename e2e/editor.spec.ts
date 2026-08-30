@@ -81,6 +81,18 @@ const downloadedPng = async (page: Page) => {
   }, data);
 };
 
+const openProjectMenu = async (page: Page) => {
+  const menu = page.locator('.workspace-menu');
+  if (await menu.getAttribute('open') === null) {
+    await menu.locator('summary').click();
+  }
+};
+
+const runProjectAction = async (page: Page, name: string) => {
+  await openProjectMenu(page);
+  await page.getByRole('button', { name }).click();
+};
+
 test.beforeEach(async ({ page }) => {
   await mockArtwork(page);
   await page.goto('/');
@@ -382,7 +394,7 @@ test('confirms clipboard copy without naming a destination app', async ({ page }
 test('persists starred projects and creates explicit template copies', async ({ page }) => {
   await page.getByLabel('Project name').fill('tilty');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('22');
-  await page.getByRole('button', { name: '☆ Star' }).click();
+  await runProjectAction(page, '☆ Add to templates');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toBeVisible();
 
   await page.reload();
@@ -397,19 +409,20 @@ test('persists starred projects and creates explicit template copies', async ({ 
   await expect(page.getByLabel('Project name')).toHaveValue('tilty copy');
   await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('22');
   await page.getByRole('button', { name: 'tilty', exact: true }).click();
-  await page.getByRole('button', { name: '★ Starred' }).click();
+  await runProjectAction(page, '★ Remove from templates');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toHaveCount(0);
 });
 
 test('autosaves projects, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
   await page.getByLabel('Project name').fill('Sticker study');
   await page.getByRole('button', { name: 'Add rectangle' }).click();
-  await page.getByRole('button', { name: 'Save now', exact: true }).click();
+  await runProjectAction(page, 'Save now');
   await expect(page.getByLabel('Open project').locator('option')).toContainText(['Open…', 'Sticker study']);
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
 
   const pending = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export JSON' }).click();
+  await openProjectMenu(page);
+  await page.getByRole('button', { name: 'Export editable project' }).click();
   const download = await pending;
   const path = await download.path();
   expect(path).not.toBeNull();
@@ -419,7 +432,7 @@ test('autosaves projects, exports and imports JSON, and exposes workspace shortc
 
   await page.getByRole('button', { name: 'New', exact: true }).click();
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toHaveCount(0);
-  await page.getByLabel('Import design JSON').setInputFiles({
+  await page.getByLabel('Import editable project').setInputFiles({
     name: 'sticker-study.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(exported)),
@@ -450,7 +463,7 @@ test('autosaves projects, exports and imports JSON, and exposes workspace shortc
 
 test('migrates a version 1 project database and records schema ownership', async ({ page }) => {
   await page.getByLabel('Project name').fill('Legacy migration fixture');
-  await page.getByRole('button', { name: 'Save now', exact: true }).click();
+  await runProjectAction(page, 'Save now');
   await page.evaluate(async () => {
     const open = (version?: number) => new Promise<IDBDatabase>((resolve, reject) => {
       const request = version === undefined ? indexedDB.open('seemoji') : indexedDB.open('seemoji', version);
@@ -518,7 +531,7 @@ test('migrates a version 1 project database and records schema ownership', async
 
 test('exports and atomically imports a workspace archive with corrupt-record details', async ({ page }) => {
   await page.getByLabel('Project name').fill('Archive source');
-  await page.getByRole('button', { name: 'Save now', exact: true }).click();
+  await runProjectAction(page, 'Save now');
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('seemoji');
@@ -535,12 +548,12 @@ test('exports and atomically imports a workspace archive with corrupt-record det
   });
   await page.reload();
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
-  await page.getByText('Storage & recovery', { exact: true }).click();
-  await expect(page.getByText('Isolated recovery records')).toBeVisible();
+  await expect(page.getByText('Recovery attention needed')).toBeVisible();
   await expect(page.getByText('broken-recovery-record', { exact: true })).toBeVisible();
 
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export workspace archive' }).click();
+  await openProjectMenu(page);
+  await page.getByRole('button', { name: 'Back up all projects' }).click();
   const archiveDownload = await download;
   const archivePath = await archiveDownload.path();
   expect(archivePath).not.toBeNull();
@@ -556,7 +569,7 @@ test('exports and atomically imports a workspace archive with corrupt-record det
   ]);
 
   const rawDownload = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export raw record' }).click();
+  await page.getByRole('button', { name: 'Export isolated record' }).click();
   const rawPath = await (await rawDownload).path();
   expect(rawPath).not.toBeNull();
   const quarantined = JSON.parse(await readFile(rawPath!, 'utf8')) as {
@@ -577,16 +590,11 @@ test('exports and atomically imports a workspace archive with corrupt-record det
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Permanently purge' }).click();
   await expect(page.locator('.notice')).toContainText('Permanently purged isolated record');
-  await expect(page.getByText('Isolated recovery records')).toHaveCount(0);
+  await expect(page.getByText('Recovery attention needed')).toHaveCount(0);
   await page.reload();
-  await page.getByText('Storage & recovery', { exact: true }).click();
-  await expect(page.getByText('Isolated recovery records')).toHaveCount(0);
+  await expect(page.getByText('Recovery attention needed')).toHaveCount(0);
 
-  const chooser = page.waitForEvent('filechooser');
-  await page.locator('.workspace-recovery-actions button', {
-    hasText: 'Import workspace archive',
-  }).click();
-  await (await chooser).setFiles({
+  await page.getByLabel('Restore workspace backup').setInputFiles({
     name: 'workspace.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(archive)),
@@ -605,16 +613,17 @@ test('coordinates two tabs and preserves simultaneous edits as a conflict copy',
   await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
 
   await page.getByLabel('Project name').fill('Broadcast project');
-  await page.getByRole('button', { name: 'Save now', exact: true }).click();
+  await runProjectAction(page, 'Save now');
   await expect(second.getByLabel('Project name')).toHaveValue('Broadcast project');
 
   await Promise.all([
     page.getByLabel('Project name').fill('Alpha concurrent'),
     second.getByLabel('Project name').fill('Beta concurrent'),
   ]);
+  await Promise.all([openProjectMenu(page), openProjectMenu(second)]);
   await Promise.all([
-    page.getByRole('button', { name: 'Save now', exact: true }).click(),
-    second.getByRole('button', { name: 'Save now', exact: true }).click(),
+    page.getByRole('button', { name: 'Save now' }).click(),
+    second.getByRole('button', { name: 'Save now' }).click(),
   ]);
 
   await expect.poll(async () => {
@@ -677,7 +686,7 @@ test('coordinates tabs through storage invalidation when BroadcastChannel is una
   expect(await second.evaluate(() => typeof BroadcastChannel)).toBe('undefined');
 
   await page.getByLabel('Project name').fill('Storage fallback project');
-  await page.getByRole('button', { name: 'Save now', exact: true }).click();
+  await runProjectAction(page, 'Save now');
   await expect(second.getByLabel('Project name')).toHaveValue('Storage fallback project');
   await second.close();
 });
