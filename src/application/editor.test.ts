@@ -169,15 +169,15 @@ describe('editor reducer', () => {
     expect(moved.design.layers.every((layer) => layer.transform.x === 0.1)).toBe(true);
   });
 
-  it('duplicates a selection with an offset and restores an earlier history point', () => {
+  it('duplicates a selection with an offset and undoes its next transformation', () => {
     const duplicated = editorReducer(INITIAL_EDITOR_STATE, { type: 'duplicate-layers',
       layerIds: ['emoji-1'], duplicateIds: ['emoji-2'], offset: 0.05 });
     expect(duplicated.design.layers[1]).toMatchObject({ id: 'emoji-2', transform: { x: 0.05, y: 0.05 } });
     expect(duplicated.selectedLayerIds).toEqual(['emoji-2']);
     const moved = editorReducer(duplicated, { type: 'update-layer-transform', layerId: 'emoji-2',
       transform: { ...duplicated.design.layers[1]!.transform, x: 0.2 } });
-    const restored = editorReducer(moved, { type: 'restore-history', index: 0 });
-    expect(restored.design.layers).toHaveLength(1);
-    expect(restored.future).toHaveLength(2);
+    const undone = editorReducer(moved, { type: 'undo' });
+    expect(undone.design.layers[1]).toMatchObject({ id: 'emoji-2', transform: { x: 0.05, y: 0.05 } });
+    expect(undone.future).toHaveLength(1);
   });
 });

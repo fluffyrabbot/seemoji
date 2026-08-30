@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_DESIGN, getEmojiLayer, type DesignDocumentV1 } from './design';
-import { decodeDesignDocument, migrateLegacyEditParams } from './designCodec';
+import { decodeDesignDocument } from './designCodec';
 
 describe('design document codec', () => {
   it('round-trips a valid V2 scene document', () => {
@@ -153,29 +153,4 @@ describe('design document codec', () => {
     expect(decoded.ok).toBe(false);
   });
 
-  it('explicitly migrates prototype edit parameters into normalized units', () => {
-    const migrated = migrateLegacyEditParams('😀', {
-      v: 1,
-      rotate: 15,
-      scaleX: 1.2,
-      scaleY: 0.8,
-      skewX: 4,
-      skewY: -3,
-      flipH: true,
-      flipV: false,
-      hue: 30,
-      saturate: 150,
-      brightness: 80,
-      blur: 4,
-      outline: { width: 3, color: '#ff00aa' },
-    });
-    expect(migrated.ok).toBe(true);
-    if (migrated.ok) {
-      const layer = getEmojiLayer(migrated.value);
-      expect(layer.appearance.saturation).toBe(1.5);
-      expect(layer.appearance.blur).toBe(4 / 128);
-      expect(layer.appearance.outline?.width).toBe(3 / 128);
-      expect(layer.source.codepoint).toBe('1f600');
-    }
-  });
 });

@@ -1,8 +1,8 @@
 # seemoji
 
 Pick an emoji, reshape and restyle it directly on the canvas, and copy or
-download the result as a transparent PNG. The web app is intentionally local-first: favorites are saved
-on the device and there are no accounts or backend services.
+download the result as a transparent PNG. The web app is intentionally local-first: projects are
+autosaved on the device and there are no accounts or backend services.
 
 ## Development
 
@@ -34,19 +34,20 @@ release or changing a browser-facing boundary:
 npx playwright install chromium firefox webkit
 npm run test:e2e:compat # Firefox and WebKit behavior
 npm run test:e2e:all    # Chromium plus the compatibility matrix
+npm run test:persistence-stress # deep repository and controller state-machine runs
 ```
 
 The complete gate builds production assets and then enforces a JavaScript
-budget across all emitted chunks: at most 102,000 raw bytes and 33,000 gzip-9
+budget across all emitted chunks: at most 128,000 raw bytes and 40,000 gzip-9
 bytes. This keeps the DPR-aware viewport, pressure-aware paint and structured-node compositor,
-history, multi-selection, and V2 scene-model baseline
+history, multi-selection, versioned cross-tab projects, conflict resolution, workspace recovery, and V2 scene-model baseline
 bounded while preserving the bundle-size reduction that motivated the
 `preact/compat` adoption.
 
 See [CI strategy](docs/ci-strategy.md) for the active/dormant split and the
 conditions that should wake the compatibility matrix.
 
-See [editor workspace](docs/editor-workspace.md) for document recovery,
+See [editor workspace](docs/editor-workspace.md) for project persistence,
 keyboard shortcuts, history behavior, and grid/snapping semantics.
 
 ## Hosting
@@ -68,7 +69,9 @@ runtime ports:
 UI event
    │
    ▼
-editorReducer + history ─────► FavoritesRepository
+editorReducer + history ─────► WorkspaceController ─────► ProjectRepository
+                                      │                         │
+                                      └──── WorkspaceSync ─────┘
    │
    ▼
 DesignDocumentV2 scene
@@ -79,14 +82,19 @@ RenderCoordinator ◄────────── EmojiAssetSource
    └────────► prepared PNG ──► ClipboardPort / FileExportPort
 ```
 
-- `src/domain` owns the design document, strict decoder, legacy migration,
-  emoji identity, favorite model, and pure render planning.
+- `src/domain` owns the design document, durable project model, strict decoders,
+  emoji identity, and pure render planning.
 - `src/ports` describes capabilities the application needs without choosing a
   browser or future native implementation.
 - `src/adapters/browser` contains Twemoji acquisition, Canvas 2D rendering,
-  browser clipboard/download behavior, and local favorites storage.
-- `src/application` owns the editor state machine, render coordination, bounded
-  caches, and the service composition contract.
+  browser clipboard/download behavior, IndexedDB project storage, storage-health inspection,
+  and cross-tab invalidation.
+  The project repository exclusively owns its database schema, ordered transactional migrations,
+  store invariants, and explicit database/project schema metadata.
+  `BrowserWorkspaceSync` prefers BroadcastChannel and falls back to storage events; neither
+  transport carries project data.
+- `src/application` owns the editor state machine, project lifecycle, revision-aware autosave and
+  conflict preservation, render coordination, bounded caches, and the service composition contract.
 - `src/ui` contains React-compatible components rendered by `preact/compat`.
   `src/main.tsx` is the only composition root and selects the browser adapters.
 
@@ -110,18 +118,31 @@ and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
 instead of changing source artwork or brush strokes. Paint layers also own an
 affine transform, so moving, resizing, and rotating them never rewrites points.
-Unknown document versions are rejected. V1 recipes and the old prototype
-favorite format have explicit one-way migrations into the current scene model.
+Unknown document versions are rejected. V1 recipes have an explicit one-way
+migration into the current scene model.
 
 The editor coalesces pointer and slider gestures into bounded undo history.
 Position is stored in output-relative coordinates, so direct canvas movement is
 resolution-independent just like blur and outline widths.
 
-Named documents and the current recovery draft are stored separately on the
-device. Draft writes are debounced and strictly decoded before recovery. JSON
-import/export uses the same document codec, while the visual history timeline
-remains session-local and can restore earlier design states without mutating the
-saved document library.
+Every named project is canonical and autosaved independently in IndexedDB. Each write uses a
+transactional revision compare-and-swap, and invalidation messages prompt other open tabs to reload
+committed projects. BroadcastChannel is primary, with a nonce-bearing localStorage event fallback
+for engines where it is unavailable. These messages contain project IDs only; IndexedDB remains the
+sole persistence authority. Simultaneous edits never silently overwrite one another: a stale writer
+is preserved with durable source-project and source-revision lineage. A comparison panel can keep
+the original, promote the conflict edit into the original identity, or keep both independently.
+Resolution verifies both revisions atomically, and unresolved conflicts prevent deletion of their
+original project. The active project identity is updated atomically with creation and deletion.
+Starred projects are metadata views over that same project
+library rather than duplicate design snapshots. JSON import/export uses the project and design
+codecs, while the visual history timeline remains session-local. Versioned workspace archives
+export every valid project plus structured details for isolated records. Archive import is additive:
+all projects receive new identities, conflict lineage is remapped, and one IndexedDB transaction
+either commits the entire batch or none of it. The recovery surface also reports quota and whether
+the browser granted persistent storage. Isolated records are never auto-deleted: each can be exported
+as a deterministic raw recovery envelope, then explicitly purged with confirmation and an atomic
+content-hash guard.
 
 Zoom, pan, device-pixel-ratio preview resolution, active tools, and brush feel
 are transient workspace state rather than document state. Pointer coordinates
@@ -164,11 +185,10 @@ surprise file download.
 - Layer selection, transforms, rename, duplicate, opacity, ordering, visibility, and deletion
 - Rectangle, ellipse, line, text, and tolerance-aware flood-fill layers
 - Shift-click and marquee multi-selection, group transforms, snapping, alignment, and distribution
-- Named local documents, automatic crash-recovery drafts, and strict JSON import/export
+- Named autosaved IndexedDB projects, atomic multi-tab conflict resolution, starred quick access, template duplication, strict JSON import/export, and workspace archives
 - Visual history navigation and keyboard shortcuts for tools, selection, duplication, grouping, and deletion
 - Internal layer copy/paste with duplicate-at-offset behavior
 - Configurable grids, persistent workspace preferences, snapping, and alignment guides
-- Local scene favorites
 - Transparent PNG export at 48, 128, and 256 pixels
 
 Planned native shells can provide a global hotkey, always-on-top behavior,

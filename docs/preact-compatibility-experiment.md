@@ -56,7 +56,7 @@ The Playwright suite exercised:
 - Resolution-independent normalized output bounds.
 - Unsupported artwork rejection without corrupting editor state.
 - Mobile preview-first layout with no horizontal overflow.
-- Favorite save, reload, reapply, and remove behavior.
+- Project autosave, reload, starring, and template-copy behavior.
 
 The same committed pixel golden passed without update under both frameworks.
 No production behavior difference was observed inside this test envelope.
@@ -93,9 +93,9 @@ persistence, validation, and responsive-layout behavior in Chromium, Firefox,
 and WebKit. Chromium runs in the active PR/main gate; Firefox and WebKit remain
 available through an intentionally manual compatibility workflow. The
 deterministic canvas screenshot remains Chromium-only to avoid treating
-engine-specific rasterization as an application regression. Active CI also
-enforces a 45,000 B raw and 17,000 B gzip-9 ceiling across all production
-JavaScript chunks.
+engine-specific rasterization as an application regression. At adoption, active
+CI enforced a 45,000 B raw and 17,000 B gzip-9 ceiling across all production
+JavaScript chunks; current limits live in `scripts/check-bundle-budget.mjs`.
 
 ## Compatibility differences and risks
 

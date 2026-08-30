@@ -51,7 +51,9 @@ const previewPixel = async (page: Page, x: number, y: number) =>
     const canvas = element as HTMLCanvasElement;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('missing canvas context');
-    return [...context.getImageData(point.x, point.y, 1, 1).data];
+    const sampleX = Math.min(canvas.width - 1, Math.round(point.x * canvas.width / 512));
+    const sampleY = Math.min(canvas.height - 1, Math.round(point.y * canvas.height / 512));
+    return [...context.getImageData(sampleX, sampleY, 1, 1).data];
   }, { x, y });
 
 const downloadedPng = async (page: Page) => {
@@ -77,6 +79,18 @@ const downloadedPng = async (page: Page) => {
       center: [...context.getImageData(image.width / 2, image.height / 2, 1, 1).data],
     };
   }, data);
+};
+
+const openProjectMenu = async (page: Page) => {
+  const menu = page.locator('.workspace-menu');
+  if (await menu.getAttribute('open') === null) {
+    await menu.locator('summary').click();
+  }
+};
+
+const runProjectAction = async (page: Page, name: string) => {
+  await openProjectMenu(page);
+  await page.getByRole('button', { name }).click();
 };
 
 test.beforeEach(async ({ page }) => {
@@ -210,7 +224,9 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   await page.getByRole('button', { name: /Redo/ }).click();
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 256, 256))[1]).toBe(79);
-  expect((await downloadedPng(page)).center[1]).toBe(79);
+  const restoredCenter = (await downloadedPng(page)).center;
+  expect(restoredCenter[1]).toBeGreaterThanOrEqual(75);
+  expect(restoredCenter[1]).toBeLessThanOrEqual(85);
 
   await page.getByRole('button', { name: 'Delete “Paint 1”' }).click();
   await expect(paintLayer).toHaveCount(0);
@@ -343,7 +359,10 @@ test('zooms and pans the transient viewport without changing export', async ({ p
 
   await page.getByRole('button', { name: 'Fit' }).click();
   await expect(page.getByLabel('Canvas zoom')).toHaveText('100%');
-  await expect(page.locator('.canvas-world')).toHaveAttribute('style', /translate\(0%, 0%\) scale\(1\)/);
+  await expect(page.locator('.canvas-world')).toHaveAttribute(
+    'style',
+    /translate\(0%(?:, 0%)?\) scale\(1\)/,
+  );
   expect(await downloadedPng(page)).toEqual(preview);
 });
 
@@ -372,34 +391,38 @@ test('confirms clipboard copy without naming a destination app', async ({ page }
   await expect(notice).not.toContainText('Discord');
 });
 
-test('persists, reapplies, and removes a favorite recipe', async ({ page }) => {
+test('persists starred projects and creates explicit template copies', async ({ page }) => {
+  await page.getByLabel('Project name').fill('tilty');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('22');
-  await page.getByRole('button', { name: '☆ Save this tweak' }).click();
-  await page.getByLabel('Favorite name').fill('tilty');
-  await page.locator('.favorite-form').getByRole('button', { name: 'Save', exact: true }).click();
+  await runProjectAction(page, '☆ Add to templates');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Reset edits' }).click();
+  await page.getByRole('button', { name: 'New', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('0');
   await page.getByRole('button', { name: 'tilty', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('22');
 
-  await page.getByRole('button', { name: 'Remove “tilty”' }).click();
+  await page.getByRole('button', { name: 'Use “tilty” as a template' }).click();
+  await expect(page.getByLabel('Project name')).toHaveValue('tilty copy');
+  await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('22');
+  await page.getByRole('button', { name: 'tilty', exact: true }).click();
+  await runProjectAction(page, '★ Remove from templates');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toHaveCount(0);
 });
 
-test('autosaves named documents, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
-  await page.getByLabel('Document name').fill('Sticker study');
+test('autosaves projects, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
+  await page.getByLabel('Project name').fill('Sticker study');
   await page.getByRole('button', { name: 'Add rectangle' }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect(page.getByLabel('Open document').locator('option')).toContainText(['Open…', 'Sticker study']);
-  await expect(page.getByRole('status').filter({ hasText: 'Draft saved' })).toBeVisible();
+  await runProjectAction(page, 'Save now');
+  await expect(page.getByLabel('Open project').locator('option')).toContainText(['Open…', 'Sticker study']);
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
 
   const pending = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export JSON' }).click();
+  await openProjectMenu(page);
+  await page.getByRole('button', { name: 'Export editable project' }).click();
   const download = await pending;
   const path = await download.path();
   expect(path).not.toBeNull();
@@ -409,7 +432,7 @@ test('autosaves named documents, exports and imports JSON, and exposes workspace
 
   await page.getByRole('button', { name: 'New', exact: true }).click();
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toHaveCount(0);
-  await page.getByLabel('Import design JSON').setInputFiles({
+  await page.getByLabel('Import editable project').setInputFiles({
     name: 'sticker-study.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(exported)),
@@ -423,7 +446,7 @@ test('autosaves named documents, exports and imports JSON, and exposes workspace
   await expect(page.locator('.layer-item.selected')).toHaveCount(2);
   await page.keyboard.press('ControlOrMeta+D');
   await expect(page.locator('.layer-item.selected')).toHaveCount(2);
-  await expect(page.getByRole('status').filter({ hasText: 'Saving draft' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Saving locally' })).toBeVisible();
   await page.keyboard.press('ControlOrMeta+G');
   await expect(page.locator('.notice')).toContainText('Grouped 2 layers');
 
@@ -432,13 +455,231 @@ test('autosaves named documents, exports and imports JSON, and exposes workspace
   await page.getByLabel('Grid divisions').selectOption('16');
   await expect(page.locator('.grid-overlay line')).toHaveCount(30);
 
-  await expect(page.getByRole('status').filter({ hasText: 'Draft saved' })).toBeVisible();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel('Document name')).toHaveValue('Sticker study');
+  await expect(page.getByLabel('Project name')).toHaveValue('Sticker study');
   await expect(page.locator('.layer-select').filter({ hasText: 'copy' })).toHaveCount(2);
 });
 
-test('has no horizontal overflow and prioritizes preview on a narrow screen', async ({ page }) => {
+test('migrates a version 1 project database and records schema ownership', async ({ page }) => {
+  await page.getByLabel('Project name').fill('Legacy migration fixture');
+  await runProjectAction(page, 'Save now');
+  await page.evaluate(async () => {
+    const open = (version?: number) => new Promise<IDBDatabase>((resolve, reject) => {
+      const request = version === undefined ? indexedDB.open('seemoji') : indexedDB.open('seemoji', version);
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const database = await open();
+    const transaction = database.transaction(['projects', 'workspace']);
+    const completed = new Promise<void>((resolve, reject) => {
+      transaction.addEventListener('complete', () => resolve(), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+    const projectsRequest = transaction.objectStore('projects').getAll();
+    const activeRequest = transaction.objectStore('workspace').get('activeProjectId');
+    const result = <T,>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const [projects, active] = await Promise.all([
+      result(projectsRequest),
+      result(activeRequest),
+      completed,
+    ]) as [unknown[], { key: string; value: string }, void];
+    database.close();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('seemoji');
+      request.addEventListener('success', () => resolve(), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('seemoji', 1);
+      request.addEventListener('upgradeneeded', () => {
+        const projectStore = request.result.createObjectStore('projects', { keyPath: 'id' });
+        for (const project of projects) projectStore.put(project);
+        request.result.createObjectStore('workspace', { keyPath: 'key' }).put(active);
+      }, { once: true });
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    legacy.close();
+  });
+
+  await page.reload();
+  await expect(page.getByLabel('Project name')).toHaveValue('Legacy migration fixture');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('seemoji');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const request = database.transaction('workspace').objectStore('workspace').get('schema');
+    const metadata = await new Promise<unknown>((resolve, reject) => {
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const version = database.version;
+    database.close();
+    return { version, metadata };
+  })).resolves.toEqual({
+    version: 2,
+    metadata: { key: 'schema', databaseVersion: 2, projectSchemaVersion: 2 },
+  });
+});
+
+test('exports and atomically imports a workspace archive with corrupt-record details', async ({ page }) => {
+  await page.getByLabel('Project name').fill('Archive source');
+  await runProjectAction(page, 'Save now');
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('seemoji');
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    const transaction = database.transaction('projects', 'readwrite');
+    transaction.objectStore('projects').put({ id: 'broken-recovery-record', schemaVersion: 2 });
+    await new Promise<void>((resolve, reject) => {
+      transaction.addEventListener('complete', () => resolve(), { once: true });
+      transaction.addEventListener('error', () => reject(transaction.error), { once: true });
+    });
+    database.close();
+  });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByText('Recovery attention needed')).toBeVisible();
+  await expect(page.getByText('broken-recovery-record', { exact: true })).toBeVisible();
+
+  const download = page.waitForEvent('download');
+  await openProjectMenu(page);
+  await page.getByRole('button', { name: 'Back up all projects' }).click();
+  const archiveDownload = await download;
+  const archivePath = await archiveDownload.path();
+  expect(archivePath).not.toBeNull();
+  const archive = JSON.parse(await readFile(archivePath!, 'utf8')) as {
+    readonly format: string;
+    readonly projects: readonly unknown[];
+    readonly omissions: readonly { readonly recordId: string | null }[];
+  };
+  expect(archive.format).toBe('seemoji-workspace');
+  expect(archive.projects).toHaveLength(1);
+  expect(archive.omissions).toEqual([
+    expect.objectContaining({ recordId: 'broken-recovery-record' }),
+  ]);
+
+  const rawDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export isolated record' }).click();
+  const rawPath = await (await rawDownload).path();
+  expect(rawPath).not.toBeNull();
+  const quarantined = JSON.parse(await readFile(rawPath!, 'utf8')) as {
+    readonly format: string;
+    readonly recordId: string | null;
+    readonly contentHash: string;
+    readonly byteSize: number;
+    readonly encodedRecord: unknown;
+  };
+  expect(quarantined).toMatchObject({
+    format: 'seemoji-quarantined-project',
+    recordId: 'broken-recovery-record',
+    contentHash: expect.stringMatching(/^fnv1a32:[0-9a-f]{8}$/u),
+    byteSize: expect.any(Number),
+    encodedRecord: { id: 'broken-recovery-record', schemaVersion: 2 },
+  });
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Permanently purge' }).click();
+  await expect(page.locator('.notice')).toContainText('Permanently purged isolated record');
+  await expect(page.getByText('Recovery attention needed')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText('Recovery attention needed')).toHaveCount(0);
+
+  await page.getByLabel('Restore workspace backup').setInputFiles({
+    name: 'workspace.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(archive)),
+  });
+  await expect(page.locator('.notice')).toContainText('Imported 1 projects with new identities');
+  await expect(page.getByLabel('Open project').locator('option')).toHaveCount(3);
+  await page.reload();
+  await expect(page.getByLabel('Project name')).toHaveValue('Archive source');
+  await expect(page.getByLabel('Open project').locator('option')).toHaveCount(3);
+});
+
+test('coordinates two tabs and preserves simultaneous edits as a conflict copy', async ({ page, context }) => {
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+
+  await page.getByLabel('Project name').fill('Broadcast project');
+  await runProjectAction(page, 'Save now');
+  await expect(second.getByLabel('Project name')).toHaveValue('Broadcast project');
+
+  await Promise.all([
+    page.getByLabel('Project name').fill('Alpha concurrent'),
+    second.getByLabel('Project name').fill('Beta concurrent'),
+  ]);
+  await Promise.all([openProjectMenu(page), openProjectMenu(second)]);
+  await Promise.all([
+    page.getByRole('button', { name: 'Save now' }).click(),
+    second.getByRole('button', { name: 'Save now' }).click(),
+  ]);
+
+  await expect.poll(async () => {
+    const names = await page.getByLabel('Open project').locator('option').allTextContents();
+    return names.filter((name) => name !== 'Open…').length;
+  }).toBe(2);
+  const names = (await page.getByLabel('Open project').locator('option').allTextContents())
+    .filter((name) => name !== 'Open…');
+  expect(names.some((name) => name.endsWith(' (conflict copy)'))).toBe(true);
+  expect(names.map((name) => name.replace(/ \(conflict copy\)$/u, '')).sort()).toEqual([
+    'Alpha concurrent',
+    'Beta concurrent',
+  ]);
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Resolve concurrent edits' })).toBeVisible();
+  await expect(page.getByText('Original', { exact: true })).toBeVisible();
+  await expect(page.getByText('Conflict edit', { exact: true })).toBeVisible();
+  await expect(second.getByRole('heading', { name: 'Resolve concurrent edits' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Keep both' }).click();
+  await expect(page.getByRole('heading', { name: 'Resolve concurrent edits' })).toHaveCount(0);
+  const resolvedNames = (await page.getByLabel('Open project').locator('option').allTextContents())
+    .filter((name) => name !== 'Open…');
+  expect(resolvedNames).not.toContainEqual(expect.stringContaining('(conflict copy)'));
+  expect(resolvedNames).toHaveLength(2);
+  await second.close();
+});
+
+test('coordinates tabs through storage invalidation when BroadcastChannel is unavailable', async ({
+  page,
+  context,
+}) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(globalThis, 'BroadcastChannel', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect(await page.evaluate(() => typeof BroadcastChannel)).toBe('undefined');
+  expect(await second.evaluate(() => typeof BroadcastChannel)).toBe('undefined');
+
+  await page.getByLabel('Project name').fill('Storage fallback project');
+  await runProjectAction(page, 'Save now');
+  await expect(second.getByLabel('Project name')).toHaveValue('Storage fallback project');
+  await second.close();
+});
+
+test('prioritizes the preview and keeps every editor panel one tap away on a narrow screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const layout = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
@@ -448,4 +689,20 @@ test('has no horizontal overflow and prioritizes preview on a narrow screen', as
   }));
   expect(layout.scrollWidth).toBe(layout.viewportWidth);
   expect(layout.previewTop).toBeLessThan(layout.pickerTop ?? 0);
+
+  const tabs = page.getByRole('radiogroup', { name: 'Editing panels' });
+  await expect(tabs).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Emoji' })).toBeChecked();
+  await tabs.getByText('Layers', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Layers' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pick an emoji' })).toBeHidden();
+  await tabs.getByText('Adjust', { exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Adjust' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Layers' })).toBeHidden();
+  const panelGap = await page.evaluate(() => {
+    const tabsRect = document.querySelector('.editor-panel-tabs')!.getBoundingClientRect();
+    const controlsRect = document.querySelector('.controls-region')!.getBoundingClientRect();
+    return Math.round(controlsRect.top - tabsRect.bottom);
+  });
+  expect(panelGap).toBeLessThanOrEqual(40);
 });

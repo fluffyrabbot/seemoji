@@ -1,30 +1,37 @@
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   canRedo,
   canUndo,
   editorReducer,
   INITIAL_EDITOR_STATE,
 } from '../application/editor';
-import type { AppServices } from '../application/services';
+import type { AppServices, StorageHealth } from '../application/services';
+import type {
+  ProjectConflictResolution,
+  WorkspaceSnapshot,
+} from '../application/workspaceController';
 import { createEmojiAssetRef } from '../domain/emoji';
-import { createFavorite, type Favorite } from '../domain/favorite';
 import {
   DEFAULT_TRANSFORM,
-  DEFAULT_DESIGN,
   DESIGN_LIMITS,
   getEmojiLayer,
+  type DesignDocument,
   type RasterLayer,
   type SceneLayer,
 } from '../domain/design';
 import { decodeDesignDocument } from '../domain/designCodec';
-import { decodeWorkspaceDocument, type WorkspaceDocument } from '../domain/workspaceDocument';
+import { decodeProject, type Project } from '../domain/project';
+import type { ProjectQuarantineRecord } from '../domain/projectQuarantine';
 import { layerWorldBounds, unionWorldBounds } from '../domain/sceneGeometry';
 import Controls from './Controls';
+import ConflictResolutionPanel from './ConflictResolutionPanel';
 import EmojiPicker from './EmojiPicker';
-import FavoritesBar from './FavoritesBar';
 import LayersPanel from './LayersPanel';
-import DocumentBar from './DocumentBar';
+import ProjectBar from './ProjectBar';
 import Preview, { type BrushSettings, type CanvasSettings, type EditorTool } from './Preview';
+import StarredProjectsBar from './StarredProjectsBar';
+import WorkspaceRecoveryPanel from './WorkspaceRecoveryPanel';
+import WorkspaceMenu from './WorkspaceMenu';
 
 export type Notice = {
   readonly kind: 'status' | 'error';
@@ -37,14 +44,15 @@ interface Props {
 
 export default function App({ services }: Props) {
   const [editor, dispatch] = useReducer(editorReducer, INITIAL_EDITOR_STATE);
-  const [favorites, setFavorites] = useState<readonly Favorite[]>([]);
-  const [documents, setDocuments] = useState<readonly WorkspaceDocument[]>([]);
-  const [documentName, setDocumentName] = useState('Untitled design');
-  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
-  const [draftStatus, setDraftStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
+  const [projects, setProjects] = useState<readonly Project[]>([]);
+  const [projectName, setProjectName] = useState('Untitled design');
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [workspaceIssues, setWorkspaceIssues] = useState<WorkspaceSnapshot['issues']>([]);
+  const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [persistenceStatus, setPersistenceStatus] =
+    useState<'loading' | 'saved' | 'saving' | 'conflict' | 'error'>('loading');
   const [selectionGroups, setSelectionGroups] = useState<readonly (readonly string[])[]>([]);
-  const [favoriteName, setFavoriteName] = useState('');
-  const [namingFavorite, setNamingFavorite] = useState(false);
   const [proportionsLocked, setProportionsLocked] = useState(true);
   const [tool, setTool] = useState<EditorTool>('select');
   const [brush, setBrush] = useState<BrushSettings>({
@@ -65,9 +73,9 @@ export default function App({ services }: Props) {
   });
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
-  const draftTimer = useRef<number | undefined>(undefined);
   const layerClipboard = useRef<readonly SceneLayer[]>([]);
-  const documentsReady = useRef(false);
+  const workspaceReady = useRef(false);
+  const conflictPanelRef = useRef<HTMLDivElement>(null);
 
   const showNotice = useCallback((next: Notice) => {
     window.clearTimeout(noticeTimer.current);
@@ -81,59 +89,79 @@ export default function App({ services }: Props) {
 
   useEffect(() => {
     let active = true;
-    services.favorites
-      .list()
-      .then((saved) => active && setFavorites(saved))
-      .catch((cause: unknown) => {
-        if (active) {
+    const unsubscribe = services.workspace.subscribeStatus((status) => {
+      if (!active) return;
+      setPersistenceStatus(status);
+    });
+    const unsubscribeWorkspace = services.workspace.subscribeWorkspace((workspace) => {
+      if (!active) return;
+      setProjects(workspace.projects);
+      setProjectName(workspace.activeProject.name);
+      setCurrentProjectId(workspace.activeProject.id);
+      setWorkspaceIssues(workspace.issues);
+      dispatch({ type: 'load-design', design: workspace.activeProject.design });
+      setSelectionGroups([]);
+    });
+    services.workspace.load()
+      .then((workspace) => {
+        if (!active) return;
+        setProjects(workspace.projects);
+        setProjectName(workspace.activeProject.name);
+        setCurrentProjectId(workspace.activeProject.id);
+        setWorkspaceIssues(workspace.issues);
+        dispatch({ type: 'load-design', design: workspace.activeProject.design });
+        workspaceReady.current = true;
+        setPersistenceStatus('saved');
+        if (workspace.issues.length > 0) {
           showNotice({
             kind: 'error',
-            message: `Favorites unavailable: ${String(cause)}`,
+            message: workspace.issues.map((issue) =>
+              `Project record ${issue.recordId ?? 'unknown'} was isolated: ${issue.error}`).join(' '),
           });
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setPersistenceStatus('error');
+          showNotice({ kind: 'error', message: `Project workspace unavailable: ${String(cause)}` });
         }
       });
     return () => {
       active = false;
+      unsubscribe();
+      unsubscribeWorkspace();
+      services.workspace.dispose();
     };
-  }, [services.favorites, showNotice]);
+  }, [services.workspace, showNotice]);
 
   useEffect(() => {
     let active = true;
-    Promise.all([services.documents.list(), services.documents.loadDraft()])
-      .then(([saved, draft]) => {
-        if (!active) return;
-        setDocuments(saved);
-        if (draft) {
-          dispatch({ type: 'load-design', design: draft.design });
-          setDocumentName(draft.name);
-          setCurrentDocumentId(draft.documentId);
-          showNotice({ kind: 'status', message: 'Recovered your latest local draft.' });
-        }
-        documentsReady.current = true;
-        setDraftStatus('saved');
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setDraftStatus('error');
-          showNotice({ kind: 'error', message: `Document recovery unavailable: ${String(cause)}` });
-        }
-      });
+    void services.storageHealth.inspect().then((health) => {
+      if (active) setStorageHealth(health);
+    }).catch(() => {
+      if (active) setStorageHealth({ durability: 'unavailable', usageBytes: null, quotaBytes: null });
+    });
     return () => { active = false; };
-  }, [services.documents, showNotice]);
+  }, [services.storageHealth]);
 
   useEffect(() => {
-    if (!documentsReady.current) return;
-    window.clearTimeout(draftTimer.current);
-    let active = true;
-    queueMicrotask(() => { if (active) setDraftStatus('saving'); });
-    draftTimer.current = window.setTimeout(() => {
-      services.documents.saveDraft({ version: 1, documentId: currentDocumentId,
-        name: documentName.trim() || 'Untitled design', design: editor.design, updatedAt: Date.now() })
-        .then(() => setDraftStatus('saved'))
-        .catch(() => setDraftStatus('error'));
-    }, 400);
-    return () => { active = false; window.clearTimeout(draftTimer.current); };
-  }, [editor.design, documentName, currentDocumentId, services.documents]);
+    if (!workspaceReady.current) return;
+    const active = services.workspace.snapshot().activeProject;
+    const name = projectName.trim() || 'Untitled design';
+    if (active.design === editor.design && active.name === name) return;
+    services.workspace.updateActive(name, editor.design);
+  }, [editor.design, projectName, services.workspace]);
+
+  useEffect(() => {
+    const flush = () => { void services.workspace.flush().catch(() => undefined); };
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [services.workspace]);
 
   useEffect(() => {
     try { localStorage.setItem('seemoji:canvas-settings:v1', JSON.stringify(canvasSettings)); }
@@ -152,111 +180,237 @@ export default function App({ services }: Props) {
     }
   };
 
-  const saveFavorite = async () => {
-    try {
-      const favorite = createFavorite({
-        id: crypto.randomUUID(),
-        name: favoriteName,
-        design: editor.design,
-        createdAt: Date.now(),
-      });
-      setFavorites(await services.favorites.save(favorite));
-      setFavoriteName('');
-      setNamingFavorite(false);
-      showNotice({ kind: 'status', message: `Saved “${favorite.name}”.` });
-    } catch (cause) {
-      showNotice({
-        kind: 'error',
-        message: `Could not save favorite: ${String(cause)}`,
-      });
-    }
-  };
-
-  const removeFavorite = async (id: string) => {
-    try {
-      setFavorites(await services.favorites.remove(id));
-      showNotice({ kind: 'status', message: 'Favorite removed.' });
-    } catch (cause) {
-      showNotice({
-        kind: 'error',
-        message: `Could not remove favorite: ${String(cause)}`,
-      });
-    }
-  };
-
-  const saveDocument = async () => {
-    try {
-      const id = currentDocumentId ?? crypto.randomUUID();
-      const document: WorkspaceDocument = { version: 1, id,
-        name: documentName.trim() || 'Untitled design', design: editor.design, updatedAt: Date.now() };
-      setDocuments(await services.documents.save(document));
-      setCurrentDocumentId(id);
-      setDocumentName(document.name);
-      showNotice({ kind: 'status', message: `Saved “${document.name}”.` });
-    } catch (cause) {
-      showNotice({ kind: 'error', message: `Could not save document: ${String(cause)}` });
-    }
-  };
-
-  const openDocument = (id: string) => {
-    const document = documents.find((candidate) => candidate.id === id);
-    if (!document) return;
-    dispatch({ type: 'load-design', design: document.design });
-    setCurrentDocumentId(document.id);
-    setDocumentName(document.name);
-    setSelectionGroups([]);
-  };
-
-  const newDocument = () => {
-    dispatch({ type: 'load-design', design: DEFAULT_DESIGN });
-    setCurrentDocumentId(null);
-    setDocumentName('Untitled design');
+  const applyWorkspace = (workspace: WorkspaceSnapshot) => {
+    setProjects(workspace.projects);
+    setCurrentProjectId(workspace.activeProject.id);
+    setProjectName(workspace.activeProject.name);
+    setWorkspaceIssues(workspace.issues);
+    dispatch({ type: 'load-design', design: workspace.activeProject.design });
     setSelectionGroups([]);
     setTool('select');
   };
 
-  const deleteDocument = async () => {
-    if (!currentDocumentId) return;
+  const saveNow = async () => {
     try {
-      setDocuments(await services.documents.remove(currentDocumentId));
-      newDocument();
-      showNotice({ kind: 'status', message: 'Document deleted. The current draft was reset.' });
+      const workspace = services.workspace.updateActive(projectName, editor.design);
+      setProjects(workspace.projects);
+      await services.workspace.flush();
+      if (services.workspace.persistenceStatus !== 'conflict') {
+        showNotice({ kind: 'status', message: 'Project saved locally.' });
+      }
     } catch (cause) {
-      showNotice({ kind: 'error', message: `Could not delete document: ${String(cause)}` });
+      showNotice({ kind: 'error', message: `Could not save project: ${String(cause)}` });
     }
   };
 
-  const exportDocument = () => {
-    const document: WorkspaceDocument = { version: 1, id: currentDocumentId ?? crypto.randomUUID(),
-      name: documentName.trim() || 'Untitled design', design: editor.design, updatedAt: Date.now() };
-    const filename = `${document.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'seemoji'}.json`;
-    services.fileExport.download(new Blob([JSON.stringify(document, null, 2)],
+  const openProject = async (id: string) => {
+    try {
+      applyWorkspace(await services.workspace.activate(id));
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Could not open project: ${String(cause)}` });
+    }
+  };
+
+  const newProject = async () => {
+    try {
+      applyWorkspace(await services.workspace.create());
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Could not create project: ${String(cause)}` });
+    }
+  };
+
+  const deleteProject = async () => {
+    if (!currentProjectId) return;
+    const name = projectName.trim() || 'Untitled design';
+    if (!window.confirm(
+      `Delete “${name}”? This permanently removes the local project and cannot be undone.`,
+    )) return;
+    try {
+      applyWorkspace(await services.workspace.deleteActive());
+      showNotice({ kind: 'status', message: `Deleted “${name}”.` });
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Could not delete project: ${String(cause)}` });
+    }
+  };
+
+  const toggleStar = async () => {
+    if (!currentProjectId) return;
+    try {
+      const workspace = services.workspace.updateActive(projectName, editor.design);
+      setProjects(workspace.projects);
+      setProjects((await services.workspace.toggleStar(currentProjectId)).projects);
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Could not update star: ${String(cause)}` });
+    }
+  };
+
+  const createFromTemplate = async (id: string) => {
+    try {
+      applyWorkspace(await services.workspace.useAsTemplate(id));
+      showNotice({ kind: 'status', message: 'Created a project from the template.' });
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Could not use template: ${String(cause)}` });
+    }
+  };
+
+  const resolveProjectConflict = async (
+    conflictProjectId: string,
+    resolution: ProjectConflictResolution,
+  ) => {
+    try {
+      applyWorkspace(await services.workspace.resolveConflict(conflictProjectId, resolution));
+      const message = resolution === 'keep-source' ? 'Kept the original project.'
+        : resolution === 'keep-conflict' ? 'Promoted the conflict edit into the original project.'
+          : 'Kept both projects independently.';
+      showNotice({ kind: 'status', message });
+    } catch (cause) {
+      showNotice({
+        kind: 'error',
+        message: `Conflict resolution changed in another tab. The workspace was refreshed. ${String(cause)}`,
+      });
+    }
+  };
+
+  const exportProject = () => {
+    const active = services.workspace.snapshot().activeProject;
+    const project: Project = { ...active, name: projectName.trim() || 'Untitled design',
+      design: editor.design, updatedAt: Math.max(Date.now(), active.createdAt) };
+    const filename = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'seemoji'}.json`;
+    services.fileExport.download(new Blob([JSON.stringify(project, null, 2)],
       { type: 'application/json' }), filename);
   };
 
-  const importDocument = async (file: File) => {
+  const importProject = async (file: File) => {
     try {
       const value: unknown = JSON.parse(await file.text());
-      const workspace = decodeWorkspaceDocument(value);
-      if (workspace.ok) {
-        dispatch({ type: 'load-design', design: workspace.value.design });
-        setCurrentDocumentId(null);
-        setDocumentName(workspace.value.name);
+      const project = decodeProject(value);
+      let name: string;
+      let design: DesignDocument;
+      if (project.ok) {
+        name = project.value.name;
+        design = project.value.design;
       } else {
-        const design = decodeDesignDocument(value);
-        if (!design.ok) throw new Error(design.error);
-        dispatch({ type: 'load-design', design: design.value });
-        setCurrentDocumentId(null);
-        setDocumentName(file.name.replace(/\.json$/i, '').slice(0, 80) || 'Imported design');
+        const decodedDesign = decodeDesignDocument(value);
+        if (!decodedDesign.ok) throw new Error(decodedDesign.error);
+        name = file.name.replace(/\.json$/i, '').slice(0, 80) || 'Imported design';
+        design = decodedDesign.value;
       }
-      setSelectionGroups([]);
-      showNotice({ kind: 'status', message: 'Imported design into a new local document.' });
+      applyWorkspace(await services.workspace.create(design, name));
+      showNotice({ kind: 'status', message: 'Imported design into a new local project.' });
     } catch (cause) {
       showNotice({ kind: 'error', message: `Import failed: ${String(cause)}` });
     }
   };
 
+  const exportWorkspaceArchive = async () => {
+    setRecoveryBusy(true);
+    try {
+      const archive = await services.workspace.exportArchive();
+      const date = new Date(archive.exportedAt).toISOString().slice(0, 10);
+      services.fileExport.download(new Blob([JSON.stringify(archive, null, 2)],
+        { type: 'application/json' }), `seemoji-workspace-${date}.json`);
+      const omission = archive.omissions.length > 0
+        ? ` ${archive.omissions.length} isolated record${archive.omissions.length === 1 ? ' is' : 's are'} listed as omitted.`
+        : '';
+      showNotice({
+        kind: 'status',
+        message: `Exported ${archive.projects.length} projects.${omission}`,
+      });
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Workspace export failed: ${String(cause)}` });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const importWorkspaceArchive = async (file: File) => {
+    setRecoveryBusy(true);
+    try {
+      const result = await services.workspace.importArchive(JSON.parse(await file.text()) as unknown);
+      applyWorkspace(result.workspace);
+      const omission = result.archivedOmissions.length > 0
+        ? ` The archive reports ${result.archivedOmissions.length} omitted corrupt record${result.archivedOmissions.length === 1 ? '' : 's'}.`
+        : '';
+      showNotice({
+        kind: 'status',
+        message: `Imported ${result.importedProjectCount} projects with new identities.${omission}`,
+      });
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Workspace import failed: ${String(cause)}` });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const exportQuarantinedRecord = async (record: ProjectQuarantineRecord) => {
+    setRecoveryBusy(true);
+    try {
+      const recovery = await services.workspace.exportQuarantinedRecord(record);
+      const identity = (recovery.recordId ?? recovery.contentHash.slice(-8))
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+      services.fileExport.download(new Blob([JSON.stringify(recovery, null, 2)],
+        { type: 'application/json' }), `seemoji-quarantine-${identity}.json`);
+      showNotice({
+        kind: 'status',
+        message: `Exported isolated record ${recovery.recordId ?? recovery.contentHash}.`,
+      });
+    } catch (cause) {
+      showNotice({
+        kind: 'error',
+        message: `Raw recovery export failed because the record may have changed. ${String(cause)}`,
+      });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const purgeQuarantinedRecord = async (record: ProjectQuarantineRecord) => {
+    const identity = record.recordId ?? record.contentHash;
+    if (!window.confirm(
+      `Permanently delete isolated record ${identity}? Export it first if it may contain recoverable data. This cannot be undone.`,
+    )) return;
+    setRecoveryBusy(true);
+    try {
+      applyWorkspace(await services.workspace.purgeQuarantinedRecord(record));
+      showNotice({ kind: 'status', message: `Permanently purged isolated record ${identity}.` });
+    } catch (cause) {
+      showNotice({
+        kind: 'error',
+        message: `Purge stopped because the record may have changed. Nothing was deleted. ${String(cause)}`,
+      });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const requestPersistentStorage = async () => {
+    setRecoveryBusy(true);
+    try {
+      const health = await services.storageHealth.requestPersistence();
+      setStorageHealth(health);
+      showNotice({
+        kind: health.durability === 'persistent' ? 'status' : 'error',
+        message: health.durability === 'persistent'
+          ? 'Persistent browser storage granted.'
+          : 'Persistent storage was not granted. Workspace archives remain available.',
+      });
+    } catch (cause) {
+      showNotice({ kind: 'error', message: `Storage persistence request failed: ${String(cause)}` });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
   const selectedLayers = editor.design.layers.filter((layer) => editor.selectedLayerIds.includes(layer.id));
+  const presentedProjects = useMemo(() => projects.map((project) => project.id === currentProjectId
+    ? { ...project, name: projectName.trim() || 'Untitled design', design: editor.design }
+    : project), [currentProjectId, editor.design, projectName, projects]);
+  const hasConflicts = presentedProjects.some((project) => project.conflict !== null);
+
+  const reviewConflicts = () => {
+    conflictPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    conflictPanelRef.current?.focus({ preventScroll: true });
+  };
 
   const expandGroupedSelection = (ids: readonly string[]) => [...new Set(ids.flatMap((id) =>
     selectionGroups.find((group) => group.includes(id)) ?? [id]))];
@@ -353,10 +507,10 @@ export default function App({ services }: Props) {
     setTool('select');
   };
 
-  const shortcutActions = useRef({ saveDocument, copySelection, pasteSelection,
+  const shortcutActions = useRef({ saveNow, copySelection, pasteSelection,
     duplicateSelection, groupSelection, ungroupSelection, selectAllLayers, deleteSelectedLayers });
   useLayoutEffect(() => {
-    shortcutActions.current = { saveDocument, copySelection, pasteSelection,
+    shortcutActions.current = { saveNow, copySelection, pasteSelection,
       duplicateSelection, groupSelection, ungroupSelection, selectAllLayers, deleteSelectedLayers };
   });
 
@@ -367,7 +521,7 @@ export default function App({ services }: Props) {
         || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
       const command = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
-      if (command && key === 's') { event.preventDefault(); void shortcutActions.current.saveDocument(); return; }
+      if (command && key === 's') { event.preventDefault(); void shortcutActions.current.saveNow(); return; }
       if (editing) return;
       if (command && key === 'z') { event.preventDefault(); dispatch({ type: event.shiftKey ? 'redo' : 'undo' }); return; }
       if (command && key === 'a') { event.preventDefault(); shortcutActions.current.selectAllLayers(); return; }
@@ -393,6 +547,14 @@ export default function App({ services }: Props) {
     return () => window.removeEventListener('keydown', handleShortcut);
   });
 
+  if (!currentProjectId) {
+    return <main className="editor-layout" aria-busy="true">
+      <p role={persistenceStatus === 'error' ? 'alert' : 'status'}>
+        {notice?.message ?? 'Opening project workspace…'}
+      </p>
+    </main>;
+  }
+
   return (
     <>
       <header className="app-header">
@@ -408,17 +570,66 @@ export default function App({ services }: Props) {
         </div>
       </header>
 
-      <DocumentBar name={documentName} documents={documents} currentId={currentDocumentId}
-        draftStatus={draftStatus} historyLength={editor.past.length}
-        onNameChange={setDocumentName} onNew={newDocument} onSave={() => void saveDocument()}
-        onOpen={openDocument} onDelete={() => void deleteDocument()} onExport={exportDocument}
-        onImport={(file) => void importDocument(file)}
-        onRestoreHistory={(index) => dispatch({ type: 'restore-history', index })} />
+      <ProjectBar name={projectName} projects={presentedProjects} currentId={currentProjectId}
+        persistenceStatus={persistenceStatus}
+        onNameChange={setProjectName} onNew={() => void newProject()}
+        onOpen={(id) => void openProject(id)}
+        menu={<WorkspaceMenu
+          starred={presentedProjects.find((project) => project.id === currentProjectId)?.starredAt != null}
+          storageHealth={storageHealth}
+          busy={recoveryBusy}
+          onSaveNow={() => void saveNow()}
+          onToggleStar={() => void toggleStar()}
+          onDelete={() => void deleteProject()}
+          onExportProject={exportProject}
+          onImportProject={(file) => void importProject(file)}
+          onExportWorkspace={() => void exportWorkspaceArchive()}
+          onImportWorkspace={(file) => void importWorkspaceArchive(file)}
+          onRequestPersistence={() => void requestPersistentStorage()}
+        />} />
+
+      {hasConflicts && (
+        <section className="workspace-status-banner conflict" role="alert">
+          <div>
+            <strong>Concurrent edits are safe.</strong>
+            <span>Compare the preserved versions and choose what to keep.</span>
+          </div>
+          <button type="button" onClick={reviewConflicts}>Review versions</button>
+        </section>
+      )}
+      {persistenceStatus === 'error' && (
+        <section className="workspace-status-banner error" role="alert">
+          <div>
+            <strong>Local changes could not be saved.</strong>
+            <span>Your editor remains open. Try the save again before closing this tab.</span>
+          </div>
+          <button type="button" onClick={() => void saveNow()}>Try saving again</button>
+        </section>
+      )}
+
+      <WorkspaceRecoveryPanel
+        issues={workspaceIssues}
+        busy={recoveryBusy}
+        onExportQuarantined={(record) => void exportQuarantinedRecord(record)}
+        onPurgeQuarantined={(record) => void purgeQuarantinedRecord(record)}
+      />
 
       <main className="editor-layout">
+        <div className="editor-panel-tabs" role="radiogroup" aria-label="Editing panels">
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="emoji-tab"
+            defaultChecked />
+          <label htmlFor="emoji-tab">Emoji</label>
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="layers-tab" />
+          <label htmlFor="layers-tab">Layers</label>
+          <input className="panel-tab-input" type="radio" name="editor-panel" id="adjust-tab" />
+          <label htmlFor="adjust-tab">Adjust</label>
+        </div>
         <section className="picker-region" aria-label="Emoji source">
-          <EmojiPicker emoji={getEmojiLayer(editor.design).source.grapheme} onPick={selectEmoji} />
-          <LayersPanel
+          <div className="emoji-panel-shell">
+            <EmojiPicker emoji={getEmojiLayer(editor.design).source.grapheme} onPick={selectEmoji} />
+          </div>
+          <div className="layers-panel-shell">
+            <LayersPanel
             design={editor.design}
             selectedLayerIds={editor.selectedLayerIds}
             onSelect={(layerId, toggle) => toggle
@@ -453,7 +664,8 @@ export default function App({ services }: Props) {
             onDuplicateSelection={duplicateSelection}
             onGroup={groupSelection}
             onUngroup={ungroupSelection}
-          />
+            />
+          </div>
         </section>
 
         <section className="preview-region" aria-label="Canvas and export">
@@ -484,13 +696,20 @@ export default function App({ services }: Props) {
             onSizeChange={(size) => dispatch({ type: 'set-size', size })}
             onNotice={showNotice}
           />
-          <FavoritesBar
-            favorites={favorites}
+          {hasConflicts && (
+            <div ref={conflictPanelRef} tabIndex={-1} className="conflict-resolution-anchor">
+              <ConflictResolutionPanel
+                projects={presentedProjects}
+                renderer={services.renderer}
+                onResolve={(id, resolution) => void resolveProjectConflict(id, resolution)}
+              />
+            </div>
+          )}
+          <StarredProjectsBar
+            projects={presentedProjects}
             renderer={services.renderer}
-            onApply={(favorite) =>
-              dispatch({ type: 'replace-design', design: favorite.design })
-            }
-            onRemove={(id) => void removeFavorite(id)}
+            onOpen={(id) => void openProject(id)}
+            onUseAsTemplate={(id) => void createFromTemplate(id)}
           />
         </section>
 
@@ -513,36 +732,6 @@ export default function App({ services }: Props) {
             onCommit={() => dispatch({ type: 'commit-history-group' })}
             onReset={() => dispatch({ type: 'reset' })}
           />
-          {!namingFavorite ? (
-            <button className="favorite-start" onClick={() => setNamingFavorite(true)}>
-              ☆ Save this tweak
-            </button>
-          ) : (
-            <form
-              className="favorite-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void saveFavorite();
-              }}
-            >
-              <label htmlFor="favorite-name">Favorite name</label>
-              <div>
-                <input
-                  id="favorite-name"
-                  autoFocus
-                  maxLength={80}
-                  value={favoriteName}
-                  onChange={(event) => setFavoriteName(event.target.value)}
-                />
-                <button type="submit" disabled={!favoriteName.trim()}>
-                  Save
-                </button>
-                <button type="button" onClick={() => setNamingFavorite(false)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
         </section>
 
       </main>
