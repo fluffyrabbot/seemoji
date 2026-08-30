@@ -42,6 +42,59 @@ describe('design document codec', () => {
     expect(decoded.ok).toBe(false);
   });
 
+  it('keeps recognized styles and drops unknown source keys', () => {
+    const layer = getEmojiLayer(DEFAULT_DESIGN);
+    const decoded = decodeDesignDocument({
+      ...DEFAULT_DESIGN,
+      layers: [{
+        ...layer,
+        source: { ...layer.source, style: 'flat', ignored: 'value' },
+      }],
+    });
+    expect(decoded.ok).toBe(true);
+    if (decoded.ok) {
+      expect(getEmojiLayer(decoded.value).source).toEqual({
+        ...layer.source,
+        style: 'flat',
+      });
+    }
+  });
+
+  it.each([null, 'invented'])('rejects invalid source style %s', (style) => {
+    const layer = getEmojiLayer(DEFAULT_DESIGN);
+    const decoded = decodeDesignDocument({
+      ...DEFAULT_DESIGN,
+      layers: [{ ...layer, source: { ...layer.source, style } }],
+    });
+    expect(decoded.ok).toBe(false);
+  });
+
+  it('round-trips every non-default pack source', () => {
+    const layer = getEmojiLayer(DEFAULT_DESIGN);
+    for (const source of [
+      { ...layer.source, pack: 'noto' as const, packVersion: '2.042.0' },
+      { ...layer.source, pack: 'fluent' as const, packVersion: '1.0.0', style: 'color' as const },
+      { ...layer.source, pack: 'fluent' as const, packVersion: '1.1.0', style: 'high-contrast' as const },
+      { ...layer.source, pack: 'openmoji' as const, packVersion: '17.0.0', style: 'color' as const },
+      { ...layer.source, pack: 'fxemoji' as const, packVersion: '1.7.9' },
+      { ...layer.source, pack: 'emojitwo' as const, packVersion: '2.2.7' },
+      { ...layer.source, pack: 'blobmoji' as const, packVersion: '1.0.0' },
+      { ...layer.source, pack: 'serenity' as const, packVersion: '1.0.0' },
+    ]) {
+      const document = { ...DEFAULT_DESIGN, layers: [{ ...layer, source }] };
+      expect(decodeDesignDocument(JSON.parse(JSON.stringify(document))))
+        .toEqual({ ok: true, value: document });
+    }
+  });
+
+  it('rejects packs outside the shipped allowlist', () => {
+    const layer = getEmojiLayer(DEFAULT_DESIGN);
+    expect(decodeDesignDocument({
+      ...DEFAULT_DESIGN,
+      layers: [{ ...layer, source: { ...layer.source, pack: 'future-pack' } }],
+    }).ok).toBe(false);
+  });
+
   it('rejects out-of-range layer values', () => {
     const layer = getEmojiLayer(DEFAULT_DESIGN);
     const decoded = decodeDesignDocument({

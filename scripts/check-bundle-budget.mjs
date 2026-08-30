@@ -2,12 +2,14 @@ import { readdir, readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 
 const DIST_DIRECTORY = new URL('../dist/', import.meta.url);
-// The synchronous editor/workspace journal, capacity enforcement, and affine-local masks
-// intentionally raise the reliability baseline to about 133k/41k gzip-9. These round
-// product budgets retain meaningful headroom without weakening the initial-load ceiling.
+// The synchronous workspace journal plus the strictly decoded emoji catalog,
+// version-scoped session orchestration, coverage gating, and dynamic attribution
+// produce a measured 155,429 B / 46,750 B gzip-9 baseline after all eight
+// canonical packs, version-scoped Fluent styles, unified pack operations, picker art, and license UI.
+// Glyph inventories remain static JSON and artwork remains external.
 const JAVASCRIPT_BUDGET = Object.freeze({
-  rawBytes: 144_000,
-  gzipBytes: 45_000,
+  rawBytes: 156_000,
+  gzipBytes: 47_000,
 });
 
 const collectJavaScript = async (directory) => {

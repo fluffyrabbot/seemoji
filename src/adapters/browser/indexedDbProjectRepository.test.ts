@@ -296,6 +296,52 @@ describe('IndexedDbProjectRepository', () => {
     repository.close();
   });
 
+  it('quarantines an unknown-pack project without dropping it during unrelated CAS saves', async () => {
+    const factory = new IDBFactory();
+    const databaseName = 'project-unknown-pack-quarantine';
+    const repository = new IndexedDbProjectRepository(factory, databaseName);
+    const valid = await repository.save(project('valid', 2), {
+      activate: true,
+      expectedRevision: null,
+    });
+    const unknown = structuredClone(project('future', 3)) as unknown as {
+      design: { layers: Array<{ source?: { pack: string } }> };
+      readonly id: string;
+    };
+    unknown.design.layers[0]!.source!.pack = 'future-pack';
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open(databaseName);
+      request.addEventListener('success', () => resolve(request.result), { once: true });
+      request.addEventListener('error', () => reject(request.error), { once: true });
+    });
+    let transaction = database.transaction('projects', 'readwrite');
+    transaction.objectStore('projects').put(unknown);
+    await new Promise<void>((resolve) => transaction.addEventListener('complete', () => resolve(), {
+      once: true,
+    }));
+
+    const loaded = await repository.load();
+    expect(loaded.projects.map(({ id }) => id)).toEqual(['valid']);
+    expect(loaded.issues).toMatchObject([{
+      recordId: 'future',
+      error: expect.stringContaining('allowlisted pack'),
+      encodedRecord: unknown,
+    }]);
+
+    await repository.save({ ...valid, name: 'Valid update', updatedAt: 4 }, {
+      activate: false,
+      expectedRevision: valid.revision,
+    });
+    transaction = database.transaction('projects', 'readonly');
+    const preserved = await requestValue(transaction.objectStore('projects').get('future'));
+    expect(preserved).toEqual(unknown);
+    const afterSave = await repository.load();
+    expect(afterSave.projects).toMatchObject([{ id: 'valid', name: 'Valid update' }]);
+    expect(afterSave.issues).toHaveLength(1);
+    database.close();
+    repository.close();
+  });
+
   it('refuses raw reads and purges after a quarantined record is tampered with', async () => {
     const factory = new IDBFactory();
     const databaseName = 'project-quarantine-tamper';

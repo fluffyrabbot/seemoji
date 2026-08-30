@@ -176,6 +176,16 @@ input[type='text'], input[type='number'], input:not([type]), select {
   text-transform: uppercase;
 }
 
+.pack-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.pack-selectors label { flex: 1 1 10rem; min-width: 0; color: #b7bac5; font-size: 0.72rem; }
+.pack-selectors label span { display: block; margin-bottom: 0.25rem; }
+.pack-selectors select { width: 100%; min-width: 0; }
+
 .emoji-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -190,6 +200,7 @@ input[type='text'], input[type='number'], input:not([type]), select {
   font-size: 1.25rem;
   line-height: 1.1;
 }
+.emoji-grid img { display: block; width: 1.35rem; height: 1.35rem; margin: auto; object-fit: contain; }
 .emoji-grid button[aria-pressed='true'] { border-color: #7c87ff; background: #343744; }
 .emoji-input { display: flex; gap: 0.4rem; }
 .emoji-input input { width: 100%; min-width: 0; }
@@ -526,6 +537,15 @@ input[type='text'], input[type='number'], input:not([type]), select {
   border-top: 1px solid #343640;
   padding-top: 0.85rem;
 }
+.share-alike-notice {
+  margin: 0.65rem 0 0;
+  border: 1px solid #766835;
+  border-radius: 9px;
+  background: #282412;
+  padding: 0.55rem 0.7rem;
+  color: #e9d88e;
+  font-size: 0.75rem;
+}
 
 .starred-projects-panel { margin-top: 1rem; }
 .starred-project-list { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 0.7rem; }
@@ -584,11 +604,43 @@ input[type='text'], input[type='number'], input:not([type]), select {
 .conflict-resolution-actions button { font-size: 0.72rem; }
 
 .app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 0.75rem clamp(1rem, 3vw, 2rem) 1rem;
   color: #858895;
   font-size: 0.75rem;
 }
 .app-footer a { color: #b2b6ff; }
+.app-footer button { flex: 0 0 auto; font-size: 0.72rem; }
+
+.licenses-dialog {
+  width: min(92vw, 620px);
+  max-height: min(82vh, 720px);
+  border: 1px solid #494c5c;
+  border-radius: 14px;
+  background: #1b1c24;
+  padding: 1rem;
+  color: #f4f4f7;
+  box-shadow: 0 18px 60px #000b;
+}
+.licenses-dialog::backdrop { background: #08090dcc; }
+.licenses-dialog-header { display: flex; justify-content: space-between; gap: 1rem; }
+.licenses-dialog-header h2 { margin: 0; font-size: 1.15rem; }
+.licenses-dialog-header p { margin: 0.25rem 0 0; color: #a9acb8; font-size: 0.78rem; }
+.licenses-dialog-header > button { align-self: start; padding: 0 0.4rem; font-size: 1.25rem; }
+.licenses-dialog ul { display: grid; gap: 0.65rem; margin: 1rem 0; padding: 0; list-style: none; }
+.licenses-dialog li {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid #343640;
+  border-radius: 10px;
+  background: #20212a;
+  padding: 0.7rem;
+}
+.licenses-dialog li span { color: #a9acb8; font-size: 0.74rem; }
+.licenses-dialog a { color: #b2b6ff; font-size: 0.78rem; }
 
 .notice {
   position: fixed;

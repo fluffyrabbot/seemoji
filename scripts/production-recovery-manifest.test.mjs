@@ -13,7 +13,7 @@ import { sha256 } from './release-manifest.mjs';
 
 const COMMIT = 'a'.repeat(40);
 const DEPLOYMENT_ID = '12345678-1234-1234-1234-123456789abc';
-const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self'; style-src 'self'";
+const CSP = "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data: https://cdn.jsdelivr.net; object-src 'none'; script-src 'self'; style-src 'self'";
 const html = '<!doctype html><link rel="icon" href="/favicon.svg">'
   + '<link rel="stylesheet" href="/assets/app.css">'
   + '<script type="module" src="/assets/app.js"></script>';

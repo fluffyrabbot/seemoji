@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   assertAssetHeaders,
   assertDocumentHeaders,
+  assertPackIndexHeaders,
   findModuleAssetPath,
   verifyDeployedRelease,
 } from './check-deployed-headers.mjs';
@@ -12,7 +13,7 @@ import { sha256 } from './release-manifest.mjs';
 const CURRENT_COMMIT = 'a'.repeat(40);
 const STALE_COMMIT = 'b'.repeat(40);
 const CSP =
-  "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self'; style-src 'self'";
+  "default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data: https://cdn.jsdelivr.net; object-src 'none'; script-src 'self'; style-src 'self'";
 const EXPECTED_HEADERS_FILE = `/*
   Cache-Control: public, max-age=0, must-revalidate
   Content-Security-Policy: ${CSP}
@@ -24,6 +25,18 @@ const EXPECTED_HEADERS_FILE = `/*
 /assets/*
   ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable
+
+/packs/:pack/:version/manifest.json
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+/packs/:pack/:version/:style/manifest.json
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+/packs/index.json
+  ! Cache-Control
+  Cache-Control: no-cache
 `;
 
 const secureDocumentHeaders = (contentType = 'text/html; charset=utf-8') =>
@@ -137,6 +150,15 @@ test('accepts only the exact immutable fingerprinted-asset policy', () => {
     })),
     /Asset Cache-Control must be exactly/,
   );
+});
+
+test('accepts only no-cache for the mutable pack index', () => {
+  assert.doesNotThrow(() => assertPackIndexHeaders(new Headers({
+    'cache-control': 'no-cache',
+  })));
+  assert.throws(() => assertPackIndexHeaders(new Headers({
+    'cache-control': 'public, max-age=31536000, immutable',
+  })), /Pack index Cache-Control/);
 });
 
 test('finds the built module independently of attribute order', () => {

@@ -1,6 +1,6 @@
 /*
   Cache-Control: public, max-age=0, must-revalidate
-  Content-Security-Policy: default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self'; style-src 'self'
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; connect-src 'self' https://cdn.jsdelivr.net; form-action 'self'; frame-ancestors 'none'; img-src 'self' blob: data: https://cdn.jsdelivr.net; object-src 'none'; script-src 'self'; style-src 'self'
   Permissions-Policy: accelerometer=(), autoplay=(), browsing-topics=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), serial=(), usb=()
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
@@ -9,3 +9,15 @@
 /assets/*
   ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable
+
+/packs/:pack/:version/manifest.json
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+/packs/:pack/:version/:style/manifest.json
+  ! Cache-Control
+  Cache-Control: public, max-age=31536000, immutable
+
+/packs/index.json
+  ! Cache-Control
+  Cache-Control: no-cache

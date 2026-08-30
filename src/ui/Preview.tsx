@@ -38,12 +38,14 @@ import {
   type PressureCurve,
 } from '../domain/stroke';
 import type { Notice } from './App';
+import type { PackSummary } from '../domain/pack';
 import { useCanvasViewport, type CanvasPoint } from './useCanvasViewport';
 
 interface Props {
   readonly design: DesignDocument;
   readonly size: ExportSize;
   readonly services: AppServices;
+  readonly packs: readonly PackSummary[];
   readonly proportionsLocked: boolean;
   readonly selectedLayerIds: readonly string[];
   readonly tool: EditorTool;
@@ -157,6 +159,7 @@ export default function Preview({
   design,
   size,
   services,
+  packs,
   proportionsLocked,
   selectedLayerIds,
   tool,
@@ -211,6 +214,10 @@ export default function Preview({
   const png = prepared?.key === renderKey ? prepared.blob : null;
   const rendering = png === null;
   const layer = getEmojiLayer(design);
+  const shareAlikeApplies = design.layers.some((candidate) =>
+    candidate.kind === 'emoji'
+    && candidate.visible
+    && packs.find((pack) => pack.id === candidate.source.pack)?.license.shareAlike === true);
   const selectedLayers = design.layers.filter((candidate) => selectedLayerIds.includes(candidate.id));
   const selectedLayer = selectedLayers[0] ?? layer;
   const drawingLayer = tool === 'eraser' || tool === 'restore'
@@ -878,6 +885,11 @@ export default function Preview({
           </button>
         </div>
       </div>
+      {shareAlikeApplies && (
+        <p className="share-alike-notice">
+          This PNG is a CC BY-SA 4.0 derivative. Share-alike applies if you distribute it.
+        </p>
+      )}
     </div>
   );
 }

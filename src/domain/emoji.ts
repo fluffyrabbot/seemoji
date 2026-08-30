@@ -1,8 +1,14 @@
-export const TWEMOJI_PACK_VERSION = '15.1.0';
+import {
+  DEFAULT_PACK_SNAPSHOT,
+  type PackId,
+  type PackSnapshot,
+  type PackStyle,
+} from './pack';
 
 export interface EmojiAssetRef {
-  readonly pack: 'twemoji';
+  readonly pack: PackId;
   readonly packVersion: string;
+  readonly style?: PackStyle;
   readonly codepoint: string;
   readonly grapheme: string;
 }
@@ -21,7 +27,7 @@ export function firstGrapheme(text: string): string | null {
   return Array.from(trimmed)[0] ?? null;
 }
 
-/** Convert a grapheme to the lowercase, dash-separated filename used by Twemoji. */
+/** Convert a grapheme to its canonical lowercase, dash-separated Unicode key. */
 export function toCodepoint(grapheme: string): string {
   return Array.from(grapheme.replace(/\uFE0F/g, ''))
     .map((character) => character.codePointAt(0)?.toString(16))
@@ -29,11 +35,15 @@ export function toCodepoint(grapheme: string): string {
     .join('-');
 }
 
-export function createEmojiAssetRef(grapheme: string): EmojiAssetRef {
-  return {
-    pack: 'twemoji',
-    packVersion: TWEMOJI_PACK_VERSION,
+export function createEmojiAssetRef(
+  grapheme: string,
+  snapshot: PackSnapshot = DEFAULT_PACK_SNAPSHOT,
+): EmojiAssetRef {
+  const ref: EmojiAssetRef = {
+    pack: snapshot.pack,
+    packVersion: snapshot.packVersion,
     codepoint: toCodepoint(grapheme),
     grapheme,
   };
+  return snapshot.style === undefined ? ref : { ...ref, style: snapshot.style };
 }

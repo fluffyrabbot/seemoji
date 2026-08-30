@@ -57,7 +57,8 @@ describe('editor reducer', () => {
 
   it('reset preserves the selected artwork', () => {
     const selected = editorReducer(INITIAL_EDITOR_STATE, {
-      type: 'set-source',
+      type: 'set-emoji-source',
+      layerId: getEmojiLayer(INITIAL_EDITOR_STATE.design).id,
       source: createEmojiAssetRef('👍'),
     });
     const edited = editorReducer(selected, {
@@ -67,6 +68,25 @@ describe('editor reducer', () => {
     const reset = editorReducer(edited, { type: 'reset' });
     expect(getEmojiLayer(reset.design).source.grapheme).toBe('👍');
     expect(getEmojiLayer(reset.design).transform.rotate).toBe(0);
+  });
+
+  it('updates only the explicitly targeted emoji layer', () => {
+    const original = getEmojiLayer(INITIAL_EDITOR_STATE.design);
+    const second = { ...original, id: 'emoji-2', name: 'Second emoji' };
+    const state = {
+      ...INITIAL_EDITOR_STATE,
+      design: { ...INITIAL_EDITOR_STATE.design, layers: [original, second] },
+    };
+    const updated = editorReducer(state, {
+      type: 'set-emoji-source',
+      layerId: second.id,
+      source: createEmojiAssetRef('👍'),
+    });
+    expect(updated.design.layers[0]).toBe(original);
+    expect(updated.design.layers[1]).toMatchObject({
+      id: second.id,
+      source: { grapheme: '👍' },
+    });
   });
 
   it('coalesces a gesture into one undo step and supports redo', () => {

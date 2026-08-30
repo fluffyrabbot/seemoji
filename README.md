@@ -18,7 +18,7 @@ npm run check     # the active PR/main CI gate
 ```
 
 The browser tests use deterministic intercepted SVG artwork, so rendering and
-layout checks do not depend on the Twemoji CDN. Playwright serves the built
+layout checks do not depend on the artwork CDN. Playwright serves the built
 `dist/` artifact rather than Vite's development transform. The active gate runs
 Chromium behavior plus the canvas pixel golden. Install that runtime with:
 
@@ -38,7 +38,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 ```
 
 The complete gate builds production assets and then enforces a JavaScript
-budget across all emitted chunks: at most 144,000 raw bytes and 45,000 gzip-9
+budget across all emitted chunks: at most 156,000 raw bytes and 47,000 gzip-9
 bytes. This keeps the DPR-aware viewport, pressure-aware paint and structured-node compositor,
 history, multi-selection, versioned cross-tab projects, conflict resolution, workspace recovery, and V2 scene-model baseline
 bounded while preserving the bundle-size reduction that motivated the
@@ -89,7 +89,7 @@ RenderCoordinator ◄────────── EmojiAssetSource
   emoji identity, and pure render planning.
 - `src/ports` describes capabilities the application needs without choosing a
   browser or future native implementation.
-- `src/adapters/browser` contains Twemoji acquisition, Canvas 2D rendering,
+- `src/adapters/browser` contains manifest-driven canonical artwork acquisition, Canvas 2D rendering,
   browser clipboard/download behavior, IndexedDB project storage, storage-health inspection,
   and cross-tab invalidation.
   The project repository exclusively owns its database schema, ordered transactional migrations,
@@ -165,10 +165,18 @@ planner calculates affine bounds plus effect padding and fits extreme supported
 combinations inside the export square. Changing from 48px to 256px therefore
 changes resolution without changing the intended composition.
 
-Artwork currently comes from the pinned `jdecked/twemoji` 15.1.0 SVG set through
-an `EmojiAssetSource`. The browser adapter validates HTTP and content-type
-responses before decoding. A Tauri build can replace this with a bundled asset
-source without changing the editor or renderer coordinator.
+Artwork comes from eight write-once snapshots published at
+`fluffyrabbot/seemoji-packs`: Twemoji, Noto Emoji, Fluent Emoji Color/Flat/High Contrast,
+Unicode-only OpenMoji Color, FxEmoji, EmojiTwo, Blobmoji, and SerenityOS Emoji.
+The picker displays the
+selected pack's canonical stills, while a manifest-driven `EmojiAssetSource`
+validates URL, HTTP response, content type, and per-pack byte cap before decoding.
+The footer attributes packs used by the design, the all-packs dialog exposes every
+catalog license, and an OpenMoji-derived PNG shows a persistent CC BY-SA 4.0
+share-alike notice before copy or download.
+A Tauri build can replace this with a bundled asset source without changing the
+editor or renderer coordinator; it should bundle these same pinned snapshot
+trees and implement the catalog and asset-source ports against local files.
 
 ## Clipboard behavior
 

@@ -14,7 +14,7 @@ const EXPECTED_CSP = new Map([
   ['connect-src', ["'self'", 'https://cdn.jsdelivr.net']],
   ['form-action', ["'self'"]],
   ['frame-ancestors', ["'none'"]],
-  ['img-src', ["'self'", 'blob:', 'data:']],
+  ['img-src', ["'self'", 'blob:', 'data:', 'https://cdn.jsdelivr.net']],
   ['object-src', ["'none'"]],
   ['script-src', ["'self'"]],
   ['style-src', ["'self'"]],
@@ -35,6 +35,7 @@ const EXPECTED_DISABLED_FEATURES = [
 
 const DOCUMENT_CACHE_POLICY = ['public', 'max-age=0', 'must-revalidate'];
 const IMMUTABLE_CACHE_POLICY = ['public', 'max-age=31536000', 'immutable'];
+const PACK_INDEX_CACHE_POLICY = ['no-cache'];
 
 const fail = (message) => {
   throw new Error(message);
@@ -124,6 +125,10 @@ export function assertAssetHeaders(headers) {
   assertExactCachePolicy(headers, IMMUTABLE_CACHE_POLICY, 'Asset');
 }
 
+export function assertPackIndexHeaders(headers) {
+  assertExactCachePolicy(headers, PACK_INDEX_CACHE_POLICY, 'Pack index');
+}
+
 const assertContentType = (path, headers) => {
   const expected = path.endsWith('.html') ? 'text/html'
     : path.endsWith('.js') ? 'javascript'
@@ -204,8 +209,14 @@ const verify = async (baseUrl, expectedManifest, fetchImpl) => {
     const fileUrl = new URL(file.path, baseUrl);
     fileUrl.searchParams.set('deployment-check', cacheBuster);
     const response = await fetchReleaseFile(fetchImpl, fileUrl);
-    if (file.path.startsWith('/assets/')) assertAssetHeaders(response.headers);
-    else assertDocumentCache(response.headers);
+    if (file.path.startsWith('/assets/') || (file.path.startsWith('/packs/')
+        && file.path !== '/packs/index.json')) {
+      assertAssetHeaders(response.headers);
+    } else if (file.path === '/packs/index.json') {
+      assertPackIndexHeaders(response.headers);
+    } else {
+      assertDocumentCache(response.headers);
+    }
     assertContentType(file.path, response.headers);
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength !== file.bytes || sha256(bytes) !== file.sha256) {

@@ -1,0 +1,30 @@
+name: Emoji pack ingest check
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ingest/**'
+      - 'public/packs/**'
+      - '.github/workflows/ingest-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/ingest/twemoji.mjs --check
+      - run: node scripts/ingest/noto.mjs --check
+      - run: node scripts/ingest/fluent.mjs --check
+      - run: node scripts/ingest/openmoji.mjs --check
+      - run: node scripts/ingest/fxemoji.mjs --check
+      - run: node scripts/ingest/emojitwo.mjs --check
+      - run: node scripts/ingest/blobmoji.mjs --check
+      - run: node scripts/ingest/serenity.mjs --check
+      - run: node scripts/ingest/index.mjs --check

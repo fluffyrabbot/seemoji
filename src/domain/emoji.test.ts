@@ -19,6 +19,15 @@ describe('emoji identity', () => {
       codepoint: '1f600',
       grapheme: '😀',
     });
+    expect(createEmojiAssetRef('😀')).not.toHaveProperty('style');
+  });
+
+  it('retains an explicitly selected snapshot style', () => {
+    expect(createEmojiAssetRef('😀', {
+      pack: 'fluent',
+      packVersion: '1.0.0',
+      style: 'color',
+    })).toMatchObject({ pack: 'fluent', style: 'color' });
   });
 
   it('extracts exactly one grapheme', () => {

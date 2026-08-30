@@ -36,7 +36,11 @@ type GroupedAction = { readonly historyGroup?: string };
 export type EditorAction =
   | { readonly type: 'load-design'; readonly design: DesignDocument }
   | ({ readonly type: 'replace-design'; readonly design: DesignDocument } & GroupedAction)
-  | ({ readonly type: 'set-source'; readonly source: EmojiAssetRef } & GroupedAction)
+  | ({
+      readonly type: 'set-emoji-source';
+      readonly layerId: string;
+      readonly source: EmojiAssetRef;
+    } & GroupedAction)
   | ({ readonly type: 'update-transform'; readonly transform: Transform } & GroupedAction)
   | ({ readonly type: 'update-layer-transform'; readonly layerId: string; readonly transform: Transform } & GroupedAction)
   | ({ readonly type: 'update-layer-transforms'; readonly updates: readonly { readonly layerId: string; readonly transform: Transform }[] } & GroupedAction)
@@ -137,12 +141,16 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         : state;
     case 'replace-design':
       return recordCapacityChangingDesign(state, action.design, action.historyGroup);
-    case 'set-source':
-      return recordDesign(
-        state,
-        updateEmojiLayer(state.design, (layer) => ({ ...layer, source: action.source })),
-        action.historyGroup,
-      );
+    case 'set-emoji-source': {
+      const layer = getLayer(state.design, action.layerId);
+      return layer?.kind === 'emoji'
+        ? recordDesign(
+            state,
+            replaceLayer(state.design, { ...layer, source: action.source }),
+            action.historyGroup,
+          )
+        : state;
+    }
     case 'update-transform':
       return recordDesign(
         state,

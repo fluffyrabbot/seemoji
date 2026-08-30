@@ -20,6 +20,7 @@ import {
 } from './design';
 import { DESIGN_CAPACITY } from './designCapacity';
 import { toCodepoint, type EmojiAssetRef } from './emoji';
+import { isPackId, isPackStyle } from './pack';
 
 export type DecodeResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -56,8 +57,8 @@ const boolean = (value: unknown, path: string): DecodeResult<boolean> =>
 function decodeSource(value: unknown): DecodeResult<EmojiAssetRef> {
   const source = record(value);
   if (!source) return { ok: false, error: 'source must be an object' };
-  if (source.pack !== 'twemoji') {
-    return { ok: false, error: 'source.pack must be "twemoji"' };
+  if (!isPackId(source.pack)) {
+    return { ok: false, error: 'source.pack is not an allowlisted pack' };
   }
   if (typeof source.packVersion !== 'string' || !PACK_VERSION.test(source.packVersion)) {
     return { ok: false, error: 'source.packVersion must be a pinned semantic version' };
@@ -71,14 +72,18 @@ function decodeSource(value: unknown): DecodeResult<EmojiAssetRef> {
   if (toCodepoint(source.grapheme) !== source.codepoint) {
     return { ok: false, error: 'source.codepoint does not match source.grapheme' };
   }
+  if (source.style !== undefined && !isPackStyle(source.style)) {
+    return { ok: false, error: 'source.style is not a recognized pack style' };
+  }
+  const decoded: EmojiAssetRef = {
+    pack: source.pack,
+    packVersion: source.packVersion,
+    codepoint: source.codepoint,
+    grapheme: source.grapheme,
+  };
   return {
     ok: true,
-    value: {
-      pack: 'twemoji',
-      packVersion: source.packVersion,
-      codepoint: source.codepoint,
-      grapheme: source.grapheme,
-    },
+    value: source.style === undefined ? decoded : { ...decoded, style: source.style },
   };
 }
 

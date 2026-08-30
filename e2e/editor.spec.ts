@@ -1,6 +1,58 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+const TWEMOJI_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/twemoji/15.1.0/manifest.json', import.meta.url),
+  'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const NOTO_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/noto/2.042.0/manifest.json', import.meta.url),
+  'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const FLUENT_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/fluent/1.0.0/color/manifest.json', import.meta.url),
+  'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const FLUENT_COLOR_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/fluent/1.1.0/color/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const FLUENT_FLAT_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/fluent/1.1.0/flat/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const FLUENT_HIGH_CONTRAST_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/fluent/1.1.0/high-contrast/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const OPENMOJI_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/openmoji/17.0.0/color/manifest.json', import.meta.url),
+  'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const FXEMOJI_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/fxemoji/1.7.9/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const EMOJITWO_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/emojitwo/2.2.7/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const BLOBMOJI_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/blobmoji/1.0.0/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const SERENITY_MANIFEST = JSON.parse(await readFile(
+  new URL('../public/packs/serenity/1.0.0/manifest.json', import.meta.url), 'utf8',
+)) as { readonly assetRoot: string; readonly glyphs: readonly string[] };
+const ASSET_ROOTS = [
+  TWEMOJI_MANIFEST.assetRoot,
+  NOTO_MANIFEST.assetRoot,
+  FLUENT_MANIFEST.assetRoot,
+  FLUENT_COLOR_MANIFEST.assetRoot,
+  FLUENT_FLAT_MANIFEST.assetRoot,
+  FLUENT_HIGH_CONTRAST_MANIFEST.assetRoot,
+  OPENMOJI_MANIFEST.assetRoot,
+  FXEMOJI_MANIFEST.assetRoot,
+  EMOJITWO_MANIFEST.assetRoot,
+  BLOBMOJI_MANIFEST.assetRoot,
+  SERENITY_MANIFEST.assetRoot,
+] as const;
+const SMILE_ASSET_URL = `${TWEMOJI_MANIFEST.assetRoot}svg/1f604.svg`;
+
 const FIXTURE_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <circle cx="50" cy="50" r="46" fill="#ffcc4d"/>
@@ -8,20 +60,24 @@ const FIXTURE_SVG = `
   <circle cx="66" cy="40" r="6" fill="#3b2f2f"/>
   <path d="M25 61 Q50 86 75 61" fill="none" stroke="#3b2f2f" stroke-width="8" stroke-linecap="round"/>
 </svg>`;
+const FIXTURE_PNG = await readFile(new URL(
+  './editor.spec.ts-snapshots/default-preview.png',
+  import.meta.url,
+));
 
 const mockArtwork = async (page: Page) => {
-  await page.route('https://cdn.jsdelivr.net/**', async (route) => {
-    if (route.request().url().endsWith('/41.svg')) {
-      await route.fulfill({ status: 404, body: 'not found' });
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: 'image/svg+xml',
-      headers: { 'access-control-allow-origin': '*' },
-      body: FIXTURE_SVG,
+  await page.route('https://cdn.jsdelivr.net/**', (route) => route.abort('blockedbyclient'));
+  for (const assetRoot of ASSET_ROOTS) {
+    await page.route(`${assetRoot}**`, async (route) => {
+      const png = assetRoot === SERENITY_MANIFEST.assetRoot;
+      await route.fulfill({
+        status: 200,
+        contentType: png ? 'image/png' : 'image/svg+xml',
+        headers: { 'access-control-allow-origin': '*' },
+        body: png ? FIXTURE_PNG : FIXTURE_SVG,
+      });
     });
-  });
+  }
 };
 
 const alphaBounds = async (page: Page) =>
@@ -112,7 +168,7 @@ test('does not apply delayed emoji validation to a different active project', as
   let releaseValidation!: () => void;
   const validationStarted = new Promise<void>((resolve) => { reportValidationStarted = resolve; });
   const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve; });
-  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+  await page.route(SMILE_ASSET_URL, async (route) => {
     reportValidationStarted();
     await validationGate;
     await route.fulfill({
@@ -142,7 +198,7 @@ test('does not apply delayed emoji validation over a same-project remote design'
   let releaseValidation!: () => void;
   const validationStarted = new Promise<void>((resolve) => { reportValidationStarted = resolve; });
   const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve; });
-  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+  await page.route(SMILE_ASSET_URL, async (route) => {
     reportValidationStarted();
     await validationGate;
     await route.fulfill({
@@ -617,10 +673,184 @@ test('zooms and pans the transient viewport without changing export', async ({ p
 });
 
 test('rejects a grapheme without artwork before changing the design', async ({ page }) => {
+  const assetRequests: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().endsWith('/41.svg')) assetRequests.push(request.url());
+  });
   await page.getByLabel('Paste another emoji').fill('A');
   await page.getByRole('button', { name: 'Use', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('No Twemoji');
   await expect(page.getByLabel('Preview of 😀')).toBeVisible();
+  expect(assetRequests).toEqual([]);
+});
+
+test('switches among canonical pack artwork with explicit styled identity', async ({ page }) => {
+  const library = page.getByLabel('Emoji library', { exact: true });
+  const selectPack = async (pack: string, name: string) => {
+    await library.selectOption(pack);
+    await expect(page.locator('.app-footer')).toContainText(name);
+    await expect(library).toBeEnabled();
+  };
+  const shareAlikeNotice = page.getByText(
+    'This PNG is a CC BY-SA 4.0 derivative. Share-alike applies if you distribute it.',
+    { exact: true },
+  );
+  await expect(shareAlikeNotice).toHaveCount(0);
+
+  await selectPack('noto', 'Noto Emoji');
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${NOTO_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+
+  await selectPack('fluent', 'Microsoft Fluent Emoji');
+  await expect(page.getByLabel('Emoji library version')).toHaveValue('1.1.0');
+  await expect(page.getByLabel('Emoji library style')).toHaveValue('color');
+  await expect(page.getByLabel('Emoji library style').locator('option')).toHaveCount(3);
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${FLUENT_COLOR_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  await page.getByLabel('Emoji library style').selectOption('flat');
+  await expect(page.getByLabel('Emoji library style')).toBeEnabled();
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${FLUENT_FLAT_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  const pendingDownload = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const path = await (await pendingDownload).path();
+  expect(path).not.toBeNull();
+  const exported = JSON.parse(await readFile(path!, 'utf8')) as {
+    readonly design: { readonly layers: ReadonlyArray<{ readonly source?: {
+      readonly pack: string;
+      readonly packVersion: string;
+      readonly style?: string;
+    } }> } };
+  expect(exported.design.layers.find(({ source }) => source)?.source).toMatchObject({
+    pack: 'fluent',
+    packVersion: '1.1.0',
+    style: 'flat',
+  });
+  await page.getByLabel('Emoji library style').selectOption('high-contrast');
+  await expect(page.getByLabel('Emoji library style')).toBeEnabled();
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${FLUENT_HIGH_CONTRAST_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  await page.getByLabel('Emoji library version').selectOption('1.0.0');
+  await expect(library).toBeEnabled();
+  await expect(page.getByLabel('Emoji library style')).toHaveCount(0);
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${FLUENT_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  await page.getByLabel('Emoji library version').selectOption('1.1.0');
+  await expect(library).toBeEnabled();
+  await expect(page.getByLabel('Emoji library style')).toHaveValue('color');
+
+  await selectPack('openmoji', 'OpenMoji');
+  await expect(shareAlikeNotice).toBeVisible();
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${OPENMOJI_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  expect(await downloadedPng(page)).toMatchObject({ width: 128, height: 128 });
+  await expect(shareAlikeNotice).toBeVisible();
+
+  for (const [pack, name] of [
+    ['fxemoji', 'FxEmoji'],
+    ['emojitwo', 'EmojiTwo'],
+    ['blobmoji', 'Blobmoji'],
+  ] as const) {
+    await selectPack(pack, name);
+    await expect(shareAlikeNotice).toHaveCount(0);
+  }
+
+  await selectPack('serenity', 'SerenityOS');
+  await expect(shareAlikeNotice).toHaveCount(0);
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${SERENITY_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    { timeout: 15_000 },
+  );
+  expect(await downloadedPng(page)).toMatchObject({ width: 128, height: 128 });
+
+  await page.getByRole('button', { name: 'All packs & licenses' }).click();
+  const licenses = page.getByRole('dialog', { name: 'Emoji packs & licenses' });
+  await expect(licenses).toBeVisible();
+  for (const name of [
+    'Twemoji', 'Noto Emoji', 'Fluent Emoji', 'OpenMoji',
+    'FxEmoji', 'EmojiTwo', 'Blobmoji', 'SerenityOS Emoji',
+  ]) {
+    await expect(licenses).toContainText(name);
+  }
+  await expect(licenses).toContainText('CC-BY-SA-4.0 · share-alike');
+  await licenses.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(licenses).not.toBeVisible();
+});
+
+test('serializes an immediate skin-tone pick behind a Fluent style change', async ({ page }) => {
+  const library = page.getByLabel('Emoji library', { exact: true });
+  await library.selectOption('fluent');
+  await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
+    'src',
+    new RegExp(`^${FLUENT_COLOR_MANIFEST.assetRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+  );
+  await expect(library).toBeEnabled();
+
+  let releaseFlatValidation!: () => void;
+  const flatValidation = new Promise<void>((resolve) => { releaseFlatValidation = resolve; });
+  await page.route('**/packs/fluent/1.1.0/flat/manifest.json', async (route) => {
+    await flatValidation;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(FLUENT_FLAT_MANIFEST),
+    });
+  });
+
+  const style = page.getByLabel('Emoji library style');
+  const input = page.getByLabel('Paste another emoji');
+  await style.selectOption('flat');
+  await expect(input).toBeDisabled();
+  releaseFlatValidation();
+  await input.fill('👍🏻');
+  await page.getByRole('button', { name: 'Use', exact: true }).click();
+  await expect(page.getByLabel('Preview of 👍🏻')).toBeVisible();
+
+  const pendingDownload = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const path = await (await pendingDownload).path();
+  expect(path).not.toBeNull();
+  const exported = JSON.parse(await readFile(path!, 'utf8')) as {
+    readonly design: { readonly layers: ReadonlyArray<{ readonly source?: {
+      readonly grapheme: string;
+      readonly pack: string;
+      readonly packVersion: string;
+      readonly style?: string;
+    } }> };
+  };
+  expect(exported.design.layers.find(({ source }) => source)?.source).toMatchObject({
+    grapheme: '👍🏻',
+    pack: 'fluent',
+    packVersion: '1.1.0',
+    style: 'flat',
+  });
+});
+
+test('keeps the design unchanged when a selected pack omits the active glyph', async ({ page }) => {
+  await page.route('**/packs/noto/2.042.0/manifest.json', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ...NOTO_MANIFEST, glyphs: NOTO_MANIFEST.glyphs.filter(
+      (codepoint) => codepoint !== '1f600',
+    ) }),
+  }));
+  await page.getByLabel('Emoji library', { exact: true }).selectOption('noto');
+  await expect(page.getByRole('alert')).toContainText('No Noto Emoji 2.042.0 artwork exists for 😀');
+  await expect(page.getByLabel('Preview of 😀')).toBeVisible();
+  await expect(page.locator('.app-footer')).toContainText('Twemoji');
 });
 
 test('confirms clipboard copy without naming a destination app', async ({ page }) => {
@@ -991,7 +1221,7 @@ test('does not flood-fill pixels from a stale preview after a remote project swi
   let releaseRender!: () => void;
   const renderStarted = new Promise<void>((resolve) => { reportRenderStarted = resolve; });
   const renderGate = new Promise<void>((resolve) => { releaseRender = resolve; });
-  await page.route('https://cdn.jsdelivr.net/**/1f604.svg', async (route) => {
+  await page.route(SMILE_ASSET_URL, async (route) => {
     reportRenderStarted();
     await renderGate;
     await route.fulfill({

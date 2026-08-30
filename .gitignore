@@ -17,6 +17,7 @@ dist-ssr
 *.local
 playwright-report
 test-results
+.tmp-packs/
 
 # Editor directories and files
 .vscode/*

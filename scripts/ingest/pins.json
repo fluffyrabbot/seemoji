@@ -1,0 +1,69 @@
+{
+  "snapshotRepo": "fluffyrabbot/seemoji-packs",
+  "packs": {
+    "twemoji": {
+      "repository": "https://github.com/jdecked/twemoji",
+      "ref": "v15.1.0",
+      "snapshotVersion": "15.1.0",
+      "format": "svg"
+    },
+    "noto": {
+      "repository": "https://github.com/googlefonts/noto-emoji",
+      "ref": "v2.042",
+      "snapshotVersion": "2.042.0",
+      "format": "svg"
+    },
+    "fluent": {
+      "repository": "https://github.com/microsoft/fluentui-emoji",
+      "ref": "1ffb34c752ecf5d402f04cfb4b392c77f57c54bc",
+      "format": "svg",
+      "versions": [
+        {
+          "snapshotVersion": "1.0.0",
+          "snapshotTag": "v1.1.0",
+          "styles": ["color"],
+          "defaultStyle": "color"
+        },
+        {
+          "snapshotVersion": "1.1.0",
+          "snapshotTag": "v1.4.0",
+          "styles": ["color", "flat", "high-contrast"],
+          "defaultStyle": "color"
+        }
+      ],
+      "defaultVersion": "1.1.0"
+    },
+    "openmoji": {
+      "repository": "https://github.com/hfg-gmuend/openmoji",
+      "ref": "17.0.0",
+      "snapshotVersion": "17.0.0",
+      "format": "svg",
+      "styles": ["color"],
+      "defaultStyle": "color"
+    },
+    "fxemoji": {
+      "repository": "https://github.com/mozilla/fxemoji",
+      "ref": "1.7.9",
+      "snapshotVersion": "1.7.9",
+      "format": "svg"
+    },
+    "emojitwo": {
+      "repository": "https://github.com/EmojiTwo/emojitwo",
+      "ref": "v2.2.7",
+      "snapshotVersion": "2.2.7",
+      "format": "svg"
+    },
+    "blobmoji": {
+      "repository": "https://github.com/C1710/blobmoji",
+      "ref": "7dd14d2b0141693485fd26bc35817bd290352a79",
+      "snapshotVersion": "1.0.0",
+      "format": "svg"
+    },
+    "serenity": {
+      "repository": "https://github.com/SerenityOS/serenity",
+      "ref": "a36d1178c205070fa8d3aea62156dc769b01bcae",
+      "snapshotVersion": "1.0.0",
+      "format": "png"
+    }
+  }
+}

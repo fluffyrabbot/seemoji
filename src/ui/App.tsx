@@ -17,11 +17,11 @@ import type {
   ProjectConflictResolution,
   WorkspaceSnapshot,
 } from '../application/workspaceController';
-import { createEmojiAssetRef } from '../domain/emoji';
 import {
   DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   getEmojiLayer,
+  getLayer,
   type DesignDocument,
   type RasterLayer,
   type SceneLayer,
@@ -66,6 +66,11 @@ export default function App({ services }: Props) {
     readWorkspace,
     readWorkspace,
   );
+  const packState = useSyncExternalStore(
+    services.packs.subscribe,
+    services.packs.getSnapshot,
+    services.packs.getSnapshot,
+  );
   const editor = session.editor;
   const projects = session.workspace?.projects ?? EMPTY_PROJECTS;
   const projectName = session.projectName;
@@ -100,6 +105,7 @@ export default function App({ services }: Props) {
   const noticeTimer = useRef<number | undefined>(undefined);
   const layerClipboard = useRef<readonly SceneLayer[]>([]);
   const conflictPanelRef = useRef<HTMLDivElement>(null);
+  const licensesDialogRef = useRef<HTMLDialogElement>(null);
   const previousProjectId = useRef<string | null>(null);
 
   const dispatch = useCallback((action: EditorAction) => {
@@ -198,6 +204,19 @@ export default function App({ services }: Props) {
 
   useEffect(() => {
     let active = true;
+    void services.packs.load().then((snapshot) => {
+      if (active && snapshot.status === 'error') {
+        showNotice({
+          kind: 'error',
+          message: `Emoji library catalog unavailable: ${snapshot.error ?? 'unknown error'}`,
+        });
+      }
+    });
+    return () => { active = false; };
+  }, [services.packs, showNotice]);
+
+  useEffect(() => {
+    let active = true;
     void services.storageHealth.inspect().then((health) => {
       if (active) setStorageHealth(health);
     }).catch(() => {
@@ -223,35 +242,22 @@ export default function App({ services }: Props) {
   }, [canvasSettings]);
 
   const selectEmoji = async (grapheme: string): Promise<boolean> => {
-    const requestedSession = services.workspace.getSnapshot();
-    const requestedProjectId = requestedSession.workspace?.activeProject.id;
-    const requestedEditorSessionEpoch = requestedSession.editorSessionEpoch;
-    if (
-      !requestedProjectId
-      || !services.workspace.acceptsEditorMutations
-    ) return false;
-    const source = createEmojiAssetRef(grapheme);
-    try {
-      await services.renderer.validateSource(source);
-      const currentSession = services.workspace.getSnapshot();
-      if (
-        !services.workspace.acceptsEditorMutations
-        || currentSession.workspace?.activeProject.id !== requestedProjectId
-        || currentSession.editorSessionEpoch !== requestedEditorSessionEpoch
-      ) {
-        return false;
-      }
-      services.workspace.dispatch({ type: 'set-source', source });
-      return true;
-    } catch (cause) {
-      const currentSession = services.workspace.getSnapshot();
-      if (
-        currentSession.workspace?.activeProject.id !== requestedProjectId
-        || currentSession.editorSessionEpoch !== requestedEditorSessionEpoch
-      ) return false;
-      showNotice({ kind: 'error', message: String(cause) });
-      return false;
-    }
+    const current = services.workspace.getSnapshot();
+    const layer = current.editor.selectedLayerIds
+      .map((id) => getLayer(current.editor.design, id))
+      .find((candidate) => candidate?.kind === 'emoji') ?? getEmojiLayer(current.editor.design);
+    const result = await services.packs.pick(grapheme, layer.id);
+    if (result.kind === 'rejected') showNotice({ kind: 'error', message: result.error });
+    return result.kind === 'applied';
+  };
+
+  const changePackSnapshot = async (target: typeof packState.selected): Promise<void> => {
+    const current = services.workspace.getSnapshot();
+    const layer = current.editor.selectedLayerIds
+      .map((id) => getLayer(current.editor.design, id))
+      .find((candidate) => candidate?.kind === 'emoji') ?? getEmojiLayer(current.editor.design);
+    const result = await services.packs.changeSnapshot(target, layer.id);
+    if (result.kind === 'rejected') showNotice({ kind: 'error', message: result.error });
   };
 
   const applyWorkspace = (_workspace: WorkspaceSnapshot) => {
@@ -620,6 +626,15 @@ export default function App({ services }: Props) {
     </main>;
   }
 
+  const pickerEmojiLayer = editor.selectedLayerIds
+    .map((id) => getLayer(editor.design, id))
+    .find((layer) => layer?.kind === 'emoji') ?? getEmojiLayer(editor.design);
+  const attributionPacks = [...new Set(editor.design.layers
+    .filter((layer) => layer.kind === 'emoji')
+    .map((layer) => layer.source.pack))]
+    .map((pack) => services.catalog.summaryFor(pack))
+    .filter((summary) => summary !== null);
+
   return (
     <>
       <header className="app-header">
@@ -700,7 +715,14 @@ export default function App({ services }: Props) {
         </div>
         <section className="picker-region" aria-label="Emoji source">
           <div className="emoji-panel-shell">
-            <EmojiPicker emoji={getEmojiLayer(editor.design).source.grapheme} onPick={selectEmoji} />
+            <EmojiPicker
+              emoji={pickerEmojiLayer.source.grapheme}
+              catalog={services.catalog}
+              snapshot={packState.selected}
+              packs={packState.packs}
+              onPick={selectEmoji}
+              onSnapshotChange={changePackSnapshot}
+            />
           </div>
           <div className="layers-panel-shell">
             <LayersPanel
@@ -748,6 +770,7 @@ export default function App({ services }: Props) {
             design={editor.design}
             size={editor.exportSize}
             services={services}
+            packs={packState.packs}
             proportionsLocked={proportionsLocked}
             selectedLayerIds={editor.selectedLayerIds}
             tool={tool}
@@ -832,20 +855,52 @@ export default function App({ services }: Props) {
       </main>
 
       <footer className="app-footer">
-        Emoji artwork by{' '}
-        <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noreferrer">
-          Twemoji
-        </a>{' '}
-        under{' '}
-        <a
-          href="https://creativecommons.org/licenses/by/4.0/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          CC BY 4.0
-        </a>
-        .
+        <div>
+          {attributionPacks.length > 0 ? attributionPacks.map((summary, index) => (
+            <span key={summary.id}>
+              {index > 0 ? ' ' : ''}{summary.license.attribution} under{' '}
+              <a href={summary.license.noticeUrl} target="_blank" rel="noreferrer">
+                {summary.license.spdx}
+              </a>.
+            </span>
+          )) : <>
+            Emoji artwork by{' '}
+            <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noreferrer">
+              Twemoji
+            </a>{' '}
+            under{' '}
+            <a href="https://creativecommons.org/licenses/by/4.0/"
+              target="_blank" rel="noreferrer">CC BY 4.0</a>.
+          </>}
+        </div>
+        <button type="button" onClick={() => licensesDialogRef.current?.showModal()}>
+          All packs &amp; licenses
+        </button>
       </footer>
+
+      <dialog ref={licensesDialogRef} className="licenses-dialog" aria-labelledby="licenses-title">
+        <div className="licenses-dialog-header">
+          <div>
+            <h2 id="licenses-title">Emoji packs &amp; licenses</h2>
+            <p>License terms for every pack available in this build.</p>
+          </div>
+          <button type="button" aria-label="Close licenses"
+            onClick={() => licensesDialogRef.current?.close()}>×</button>
+        </div>
+        <ul>
+          {packState.packs.map((summary) => (
+            <li key={summary.id}>
+              <strong>{summary.name}</strong>
+              <span>Unicode {summary.unicodeLevel} · version {summary.defaultVersion}</span>
+              <span>{summary.license.attribution}</span>
+              <a href={summary.license.noticeUrl} target="_blank" rel="noreferrer">
+                {summary.license.spdx}{summary.license.shareAlike ? ' · share-alike' : ''}
+              </a>
+            </li>
+          ))}
+        </ul>
+        <button type="button" onClick={() => licensesDialogRef.current?.close()}>Close</button>
+      </dialog>
 
       {notice && (
         <div

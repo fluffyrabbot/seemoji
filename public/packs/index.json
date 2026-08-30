@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "twemoji",
+      "name": "Twemoji",
+      "versions": [
+        {
+          "version": "15.1.0",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "15.1.0",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "attribution": "Emoji artwork by Twemoji",
+        "shareAlike": false,
+        "noticeUrl": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "unicodeLevel": "15.1"
+    },
+    {
+      "id": "noto",
+      "name": "Noto Emoji",
+      "versions": [
+        {
+          "version": "2.042.0",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "2.042.0",
+      "license": {
+        "spdx": "Apache-2.0",
+        "attribution": "Emoji artwork by Noto Emoji",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/googlefonts/noto-emoji/blob/v2.042/LICENSE"
+      },
+      "unicodeLevel": "15.1"
+    },
+    {
+      "id": "fluent",
+      "name": "Fluent Emoji",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "styles": [
+            "color"
+          ],
+          "defaultStyle": "color"
+        },
+        {
+          "version": "1.1.0",
+          "styles": [
+            "color",
+            "flat",
+            "high-contrast"
+          ],
+          "defaultStyle": "color"
+        }
+      ],
+      "defaultVersion": "1.1.0",
+      "license": {
+        "spdx": "MIT",
+        "attribution": "Emoji artwork by Microsoft Fluent Emoji",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/microsoft/fluentui-emoji/blob/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/LICENSE"
+      },
+      "unicodeLevel": "15.1"
+    },
+    {
+      "id": "openmoji",
+      "name": "OpenMoji",
+      "versions": [
+        {
+          "version": "17.0.0",
+          "styles": [
+            "color"
+          ],
+          "defaultStyle": "color"
+        }
+      ],
+      "defaultVersion": "17.0.0",
+      "license": {
+        "spdx": "CC-BY-SA-4.0",
+        "attribution": "Emoji artwork by OpenMoji",
+        "shareAlike": true,
+        "noticeUrl": "https://github.com/hfg-gmuend/openmoji/blob/17.0.0/LICENSE.txt"
+      },
+      "unicodeLevel": "17.0"
+    },
+    {
+      "id": "fxemoji",
+      "name": "FxEmoji",
+      "versions": [
+        {
+          "version": "1.7.9",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "1.7.9",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "attribution": "Emoji artwork by Mozilla FxEmoji",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/mozilla/fxemoji/blob/1.7.9/LICENSE.md"
+      },
+      "unicodeLevel": "8.0"
+    },
+    {
+      "id": "emojitwo",
+      "name": "EmojiTwo",
+      "versions": [
+        {
+          "version": "2.2.7",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "2.2.7",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "attribution": "Emoji artwork by EmojiTwo",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/EmojiTwo/emojitwo/blob/v2.2.7/LICENSE.md"
+      },
+      "unicodeLevel": "9.0"
+    },
+    {
+      "id": "blobmoji",
+      "name": "Blobmoji",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "1.0.0",
+      "license": {
+        "spdx": "Apache-2.0",
+        "attribution": "Emoji artwork by Blobmoji",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/C1710/blobmoji/blob/7dd14d2b0141693485fd26bc35817bd290352a79/LICENSE"
+      },
+      "unicodeLevel": "13.1"
+    },
+    {
+      "id": "serenity",
+      "name": "SerenityOS Emoji",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "styles": [],
+          "defaultStyle": null
+        }
+      ],
+      "defaultVersion": "1.0.0",
+      "license": {
+        "spdx": "BSD-2-Clause",
+        "attribution": "SerenityOS emoji artwork, Copyright © 2018–2026 the SerenityOS developers",
+        "shareAlike": false,
+        "noticeUrl": "https://github.com/SerenityOS/serenity/blob/a36d1178c205070fa8d3aea62156dc769b01bcae/LICENSE"
+      },
+      "unicodeLevel": "17.0"
+    }
+  ]
+}
