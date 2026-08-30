@@ -13,6 +13,9 @@ builds and verifies the assets. The repository pins Node 24.13.1 in
 exercises it in all supported browser engines, and uploads it as an immutable
 workflow artifact. The protected deployment job downloads and re-verifies those
 same bytes before Cloudflare credentials are made available to individual steps.
+All external actions are full-SHA pinned to reviewed Node 24-native releases;
+`scripts/workflow-action-policy.test.mjs` prevents a floating tag or unreviewed
+action revision from entering any workflow.
 
 ## Release invariants
 

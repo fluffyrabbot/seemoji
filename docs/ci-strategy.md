@@ -113,6 +113,12 @@ manifest containing the full Git SHA and every public file's SHA-256 digest.
 The verified `dist/` directory is uploaded as an immutable GitHub artifact; no
 Cloudflare secret is available to this job.
 
+Every external workflow action is pinned to a reviewed full commit SHA from a
+Node 24-native release, with the human-readable release beside the pin. The
+delivery-policy suite rejects floating tags, unknown actions, stale pins, and
+workflow-specific Node versions; all jobs consume the repository's exact
+`.node-version` instead.
+
 Only the dependent `deploy` job enters the protected `production` environment.
 It downloads and re-verifies the artifact, and Cloudflare credentials are scoped
 to only the steps that require them. The artifact is first uploaded to a unique

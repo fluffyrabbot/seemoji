@@ -22,8 +22,8 @@ jobs:
     steps:
       - name: Require the reviewed main branch
         run: test "$GITHUB_REF" = 'refs/heads/main'
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: npm
@@ -34,7 +34,7 @@ jobs:
         env:
           SEEMOJI_RELEASE_COMMIT: ${{ github.sha }}
       - name: Upload immutable verified artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: seemoji-production-${{ github.sha }}
           path: dist
@@ -49,14 +49,14 @@ jobs:
       name: production
       url: https://seemoji.pages.dev
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
       - name: Download verified artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: seemoji-production-${{ github.sha }}
           path: dist
@@ -142,7 +142,7 @@ jobs:
           "$SEEMOJI_CANONICAL_IDENTITY"
       - name: Persist legacy bootstrap rollback identity
         if: ${{ inputs.bootstrap_legacy_baseline }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.canonical.outputs.bootstrap-artifact }}
           path: ${{ steps.canonical.outputs.identity }}
@@ -176,7 +176,7 @@ jobs:
           echo "manifest=$recovery_manifest" >> "$GITHUB_OUTPUT"
       - name: Persist known-good production recovery bundle
         if: ${{ !inputs.bootstrap_legacy_baseline }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.previous.outputs.artifact }}
           path: ${{ steps.previous.outputs.directory }}
