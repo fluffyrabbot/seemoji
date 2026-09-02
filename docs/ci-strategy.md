@@ -20,7 +20,8 @@ Chromium and runs `npm run check`, which performs:
   every transition.
 - Delivery-policy contract tests.
 - A production TypeScript and Vite build.
-- The aggregate production JavaScript budget.
+- Independent initial-graph and deferred production JavaScript budgets, with
+  safe-reference and complete static-import-graph validation.
 - Chromium rendering, persistence, validation, responsive-layout, and pixel
   golden tests against the built `dist/` artifact.
 
@@ -79,6 +80,8 @@ non-visual scenarios in both Firefox and WebKit.
 - `npm run test:e2e`: build and run Chromium browser tests.
 - `npm run test:e2e:compat`: build and run Firefox/WebKit behavior tests.
 - `npm run test:e2e:all`: build and run all configured browser projects.
+- `npm run check:bundle`: classify JavaScript from the built document, report
+  initial/deferred/total transfer sizes, and enforce both loading-class budgets.
 - `npm run check:compat`: active gate followed by Firefox/WebKit behavior.
 - `npm run check:artifact`: verify that `dist/` still exactly matches its release manifest.
 - `npm run check:release`: compatibility gate, both deep persistence models, and final artifact

@@ -70,7 +70,7 @@ Relevant facts in the tree today:
 | Renderer | `src/adapters/browser/canvasRenderer.ts` | `drawImage(asset, …)` + filters + outline. Pack-agnostic. |
 | Boundaries | `src/architecture.test.ts` | domain / ports / application / `adapters/browser` must not import React, Preact, or `src/ui`. UI (`App.tsx`, `EmojiPicker.tsx`, `Preview.tsx`) imports application + domain only, not adapters. |
 | Hosting | `docs/deployment.md` | Static Cloudflare Pages. No Functions, KV, R2, or server. |
-| JS budget | `scripts/check-bundle-budget.mjs` | **156,000 raw / 47,000 gzip-9** across **all** emitted `.js` chunks. |
+| JS budget at the end of the pack rollout | `scripts/check-bundle-budget.mjs` | Historical **156,000 raw / 47,000 gzip-9** aggregate ceiling; see `docs/bundle-budget.md` for the current split policy. |
 | e2e | `e2e/editor.spec.ts` | Playwright serves `dist/`, intercepts only the committed `assetRoot`, blocks other jsDelivr traffic, and includes two-tab project concurrency. Copy-reject text contains `No Twemoji`. `@visual` is Chromium-only. |
 | Layout | `src/index.css` | Narrow overflow invariant: 620px two-column, 390×844 stacked with no horizontal overflow. Picker grid becomes 8 columns at 620px. |
 
@@ -1326,7 +1326,7 @@ None remaining for implementation. Product choices that were previously listed h
 - `src/main.tsx` — composition root
 - `src/ui/App.tsx`, `EmojiPicker.tsx`, `StarredProjectsBar.tsx`, `Preview.tsx`
 - `src/architecture.test.ts` — framework boundary
-- `scripts/check-bundle-budget.mjs` — 156,000 / 47,000 active ceiling; unified-operation baseline is 155,429 / 46,750
+- `scripts/check-bundle-budget.mjs` — current loading-class gate; unified-operation historical baseline is 155,429 / 46,750
 - `e2e/editor.spec.ts` — committed-`assetRoot` intercept, no request for uncovered `/41.svg`, `No Twemoji`
 - `README.md`, `docs/deployment.md`, `docs/ci-strategy.md`
 - [jdecked/twemoji](https://github.com/jdecked/twemoji), [googlefonts/noto-emoji](https://github.com/googlefonts/noto-emoji), [microsoft/fluentui-emoji](https://github.com/microsoft/fluentui-emoji), [hfg-gmuend/openmoji](https://github.com/hfg-gmuend/openmoji), [mozilla/fxemoji](https://github.com/mozilla/fxemoji), [EmojiTwo/emojitwo](https://github.com/EmojiTwo/emojitwo), [C1710/blobmoji](https://github.com/C1710/blobmoji), and SerenityOS `Base/res/emoji`
@@ -1379,7 +1379,7 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - `src/ui/App.tsx` — boot sequence (**no** remap of `DEFAULT_DESIGN`); footer from deduplicated emoji-layer pack ids via `summaryFor`, with hardcoded fallback
 - `src/ui/EmojiPicker.tsx` — first paint full `CURATED`; after `hasGlyph` batch, omit uncovered cells (still system-font). Unstyled `get()` does not wait on `list()`.
 - `e2e/editor.spec.ts` — paste `A` asserts `No Twemoji`; keep jsDelivr intercept **and** `/41.svg` 404
-- `scripts/check-bundle-budget.mjs` — measured PR 2 delta is 11,874 raw / 3,135 gzip; active ceiling is 156,000 raw / 47,000 gzip
+- `scripts/check-bundle-budget.mjs` — measured PR 2 delta is 11,874 raw / 3,135 gzip; then-active historical ceiling was 156,000 raw / 47,000 gzip
 
 **Depends on:** PR 1.
 
