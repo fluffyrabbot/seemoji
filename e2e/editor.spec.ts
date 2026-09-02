@@ -155,6 +155,57 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
 });
 
+test('keeps the A/A export-bar assignment stable across page views', async ({ page }) => {
+  const exportBar = page.locator('.export-bar');
+  await expect(exportBar).toHaveAttribute('data-experiment-variant', /^control-[ab]$/);
+  const firstVariant = await exportBar.getAttribute('data-experiment-variant');
+  const storedVariant = await page.evaluate(() => {
+    const encoded = localStorage.getItem('seemoji:experiments:v1');
+    if (!encoded) return null;
+    const state = JSON.parse(encoded) as {
+      readonly assignments?: readonly {
+        readonly experimentKey?: string;
+        readonly variant?: string;
+      }[];
+    };
+    return state.assignments?.find(({ experimentKey }) =>
+      experimentKey === 'export-bar-aa')?.variant ?? null;
+  });
+  expect(storedVariant).toBe(firstVariant);
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
+  await expect(exportBar).toHaveAttribute('data-experiment-variant', firstVariant!);
+
+  for (const forcedVariant of ['control-a', 'control-b'] as const) {
+    await page.evaluate((variant) => {
+      const key = 'seemoji:experiments:v1';
+      const encoded = localStorage.getItem(key);
+      if (!encoded) throw new Error('experiment state is missing');
+      const state = JSON.parse(encoded) as {
+        readonly version: number;
+        readonly installationId: string;
+        readonly assignments: readonly {
+          readonly experimentKey: string;
+          readonly experimentVersion: number;
+          readonly variant: string;
+        }[];
+      };
+      localStorage.setItem(key, JSON.stringify({
+        ...state,
+        assignments: [{
+          experimentKey: 'export-bar-aa',
+          experimentVersion: 1,
+          variant,
+        }],
+      }));
+    }, forcedVariant);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
+    await expect(exportBar).toHaveAttribute('data-experiment-variant', forcedVariant);
+  }
+});
+
 test(
   'renders a stable default preview',
   { tag: '@visual' },

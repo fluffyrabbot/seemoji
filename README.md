@@ -37,12 +37,15 @@ npm run test:e2e:all    # Chromium plus the compatibility matrix
 npm run test:persistence-stress # deep repository and controller state-machine runs
 ```
 
-The complete gate builds production assets and then enforces a JavaScript
-budget across all emitted chunks: at most 156,000 raw bytes and 47,000 gzip-9
-bytes. This keeps the DPR-aware viewport, pressure-aware paint and structured-node compositor,
-history, multi-selection, versioned cross-tab projects, conflict resolution, workspace recovery, and V2 scene-model baseline
-bounded while preserving the bundle-size reduction that motivated the
-`preact/compat` adoption.
+The complete gate builds production assets and then enforces independent
+JavaScript budgets for the document's initial static module graph (at most
+169,000 raw bytes and 51,000 gzip-9 bytes) and all deferred or otherwise
+unreachable chunks (at most 12,000 raw bytes and 4,000 gzip-9 bytes). It also
+reports the informational total. The initial limit is the rounded measured
+baseline for the editor experiment seam, assignment runtime, and semantic export
+events; the current build emits no deferred JavaScript. See
+[JavaScript bundle budget](docs/bundle-budget.md) for the graph classification,
+measurements, and policy for changing either ceiling.
 
 See [CI strategy](docs/ci-strategy.md) for the active/dormant split and the
 conditions that should wake the compatibility matrix.
@@ -100,6 +103,13 @@ RenderCoordinator ◄────────── EmojiAssetSource
   conflict preservation, render coordination, bounded caches, and the service composition contract.
 - `src/ui` contains React-compatible components rendered by `preact/compat`.
   `src/main.tsx` is the only composition root and selects the browser adapters.
+
+UI experiments use one typed, versioned assignment runtime and a single
+controller-owned export-surface slot. The checked-in experiment is deliberately
+A/A and the production event sink is deliberately null, so it validates both
+render branches and sticky assignment without collecting data. See
+[UI experimentation](docs/ui-experimentation.md) for the lifecycle and event
+semantics required before introducing a treatment or collector.
 
 `src/architecture.test.ts` enforces that the domain, ports, application, and
 rendering adapters cannot import React, Preact, or the UI layer. A separate

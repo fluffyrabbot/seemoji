@@ -5,6 +5,7 @@ import type { StorageHealthPort } from '../ports/storageHealth';
 import type { EmojiPackCatalog } from '../ports/emojiPackCatalog';
 import type { PackPreferenceStore } from '../ports/packPreference';
 import type { PackSession } from './packSession';
+import type { AssetDeliveryService } from './assetDelivery';
 
 export type { StorageHealth } from '../ports/storageHealth';
 
@@ -17,4 +18,5 @@ export interface AppServices {
   readonly catalog: EmojiPackCatalog;
   readonly packPreference: PackPreferenceStore;
   readonly packs: PackSession;
+  readonly assetDelivery: AssetDeliveryService;
 }

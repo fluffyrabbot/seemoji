@@ -6,8 +6,9 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
-import { EXPORT_SIZES, type ExportSize } from '../application/editor';
-import type { AppServices } from '../application/services';
+import type { ExportSize } from '../application/editor';
+import type { AssetDeliveryService } from '../application/assetDelivery';
+import type { RenderCoordinator } from '../application/renderCoordinator';
 import {
   DESIGN_LIMITS,
   getEmojiLayer,
@@ -37,14 +38,23 @@ import {
   stabilizeStrokePoint,
   type PressureCurve,
 } from '../domain/stroke';
-import type { Notice } from './App';
 import type { PackSummary } from '../domain/pack';
+import type {
+  BrushSettings,
+  CanvasSettings,
+  EditorTool,
+  ExportBarRenderer,
+  Notice,
+} from './editor/contracts';
 import { useCanvasViewport, type CanvasPoint } from './useCanvasViewport';
+
+export type { BrushSettings, CanvasSettings, EditorTool } from './editor/contracts';
 
 interface Props {
   readonly design: DesignDocument;
   readonly size: ExportSize;
-  readonly services: AppServices;
+  readonly renderer: RenderCoordinator;
+  readonly assetDelivery: AssetDeliveryService;
   readonly packs: readonly PackSummary[];
   readonly proportionsLocked: boolean;
   readonly selectedLayerIds: readonly string[];
@@ -62,24 +72,7 @@ interface Props {
   readonly onTransformCommit: () => void;
   readonly onSizeChange: (size: ExportSize) => void;
   readonly onNotice: (notice: Notice) => void;
-}
-
-export type EditorTool = 'select' | 'brush' | 'eraser' | 'restore' | 'fill' | 'pan';
-
-export interface BrushSettings {
-  readonly color: string;
-  readonly width: number;
-  readonly opacity: number;
-  readonly stabilization: number;
-  readonly pressureCurve: PressureCurve;
-  readonly fillTolerance: number;
-}
-
-export interface CanvasSettings {
-  readonly showGrid: boolean;
-  readonly gridDivisions: number;
-  readonly snap: boolean;
-  readonly showGuides: boolean;
+  readonly renderExportBar: ExportBarRenderer;
 }
 
 type Point = CanvasPoint;
@@ -158,7 +151,8 @@ const svgLayerTransform = (layer: SceneLayer, size: number): string => {
 export default function Preview({
   design,
   size,
-  services,
+  renderer,
+  assetDelivery,
   packs,
   proportionsLocked,
   selectedLayerIds,
@@ -176,6 +170,7 @@ export default function Preview({
   onTransformCommit,
   onSizeChange,
   onNotice,
+  renderExportBar,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -255,7 +250,7 @@ export default function Preview({
 
   useEffect(() => {
     const sequence = ++renderSequence.current;
-    services.renderer
+    renderer
       .render(previewDesign, previewRenderSize)
       .then((frame) => {
         if (sequence !== renderSequence.current || !canvasRef.current) return;
@@ -267,7 +262,7 @@ export default function Preview({
         if (frame.warnings.length > 0) {
           onNotice({ kind: 'error', message: frame.warnings.join(' ') });
         }
-        return services.renderer.png(design, size);
+        return renderer.png(design, size);
       })
       .then((blob) => {
         if (sequence === renderSequence.current && blob) {
@@ -279,7 +274,7 @@ export default function Preview({
           onNotice({ kind: 'error', message: `Render failed: ${String(cause)}` });
         }
       });
-  }, [design, previewDesign, previewRenderSize, size, services.renderer, onNotice, renderKey, previewKey]);
+  }, [design, previewDesign, previewRenderSize, size, renderer, onNotice, renderKey, previewKey]);
 
   const strokePointInStage = (
     event: PointerEvent,
@@ -625,8 +620,15 @@ export default function Preview({
   const copy = async () => {
     if (!png) return;
     setCopying(true);
-    const outcome = await services.clipboard.writePng(png);
-    setCopying(false);
+    let outcome: Awaited<ReturnType<AssetDeliveryService['copyPng']>>;
+    try {
+      outcome = await assetDelivery.copyPng(png);
+    } catch (cause) {
+      onNotice({ kind: 'error', message: `Copy failed: ${String(cause)}` });
+      return;
+    } finally {
+      setCopying(false);
+    }
     switch (outcome.kind) {
       case 'copied':
         onNotice({ kind: 'status', message: 'PNG copied to your clipboard.' });
@@ -865,26 +867,16 @@ export default function Preview({
         {rendering && <span className="render-status">Rendering…</span>}
       </div>
 
-      <div className="export-bar">
-        <label className="size-control">
-          <span>Export size</span>
-          <select value={size}
-            onChange={(event) => onSizeChange(Number(event.target.value) as ExportSize)}>
-            {EXPORT_SIZES.map((candidate) => (
-              <option key={candidate} value={candidate}>{candidate} × {candidate}px</option>
-            ))}
-          </select>
-        </label>
-        <div className="preview-actions">
-          <button className="primary" disabled={!png || copying} onClick={() => void copy()}>
-            {!png ? 'Preparing PNG…' : copying ? 'Copying…' : 'Copy PNG'}
-          </button>
-          <button disabled={!png}
-            onClick={() => png && services.fileExport.download(png, 'seemoji.png')}>
-            Download PNG
-          </button>
-        </div>
-      </div>
+      {renderExportBar({
+        size,
+        prepared: png !== null,
+        copying,
+        onSizeChange,
+        onCopy: () => void copy(),
+        onDownload: () => {
+          if (png) assetDelivery.downloadPng(png, 'seemoji.png');
+        },
+      })}
       {shareAlikeApplies && (
         <p className="share-alike-notice">
           This PNG is a CC BY-SA 4.0 derivative. Share-alike applies if you distribute it.

@@ -23,36 +23,34 @@ import {
   getEmojiLayer,
   getLayer,
   type DesignDocument,
-  type RasterLayer,
   type SceneLayer,
 } from '../domain/design';
 import { decodeDesignDocument } from '../domain/designCodec';
 import { decodeProject, type Project } from '../domain/project';
 import type { ProjectQuarantineRecord } from '../domain/projectQuarantine';
 import { layerWorldBounds, unionWorldBounds } from '../domain/sceneGeometry';
-import Controls from './Controls';
-import ConflictResolutionPanel from './ConflictResolutionPanel';
-import EmojiPicker from './EmojiPicker';
-import LayersPanel from './LayersPanel';
-import ProjectBar from './ProjectBar';
-import Preview, { type BrushSettings, type CanvasSettings, type EditorTool } from './Preview';
-import StarredProjectsBar from './StarredProjectsBar';
-import WorkspaceRecoveryPanel from './WorkspaceRecoveryPanel';
-import WorkspaceMenu from './WorkspaceMenu';
+import EditorExperience from './experiments/EditorExperience';
+import type { EditorExperimentClient } from './experiments/contracts';
+import type {
+  BrushSettings,
+  CanvasSettings,
+  EditorPageCommands,
+  EditorPageViewModel,
+  EditorTool,
+  Notice,
+} from './editor/contracts';
 
-export type Notice = {
-  readonly kind: 'status' | 'error';
-  readonly message: string;
-};
+export type { Notice } from './editor/contracts';
 
 interface Props {
   readonly services: AppServices;
+  readonly experiments: EditorExperimentClient;
 }
 
 const EMPTY_PROJECTS: readonly Project[] = [];
 const EMPTY_WORKSPACE_ISSUES: WorkspaceSnapshot['issues'] = [];
 
-export default function App({ services }: Props) {
+export default function App({ services, experiments }: Props) {
   const subscribeToWorkspace = useCallback(
     (listener: () => void) => services.workspace.subscribe(listener),
     [services.workspace],
@@ -104,8 +102,6 @@ export default function App({ services }: Props) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const layerClipboard = useRef<readonly SceneLayer[]>([]);
-  const conflictPanelRef = useRef<HTMLDivElement>(null);
-  const licensesDialogRef = useRef<HTMLDialogElement>(null);
   const previousProjectId = useRef<string | null>(null);
 
   const dispatch = useCallback((action: EditorAction) => {
@@ -478,11 +474,6 @@ export default function App({ services }: Props) {
     : project), [currentProjectId, editor.design, projectName, projects]);
   const hasConflicts = presentedProjects.some((project) => project.conflict !== null);
 
-  const reviewConflicts = () => {
-    conflictPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    conflictPanelRef.current?.focus({ preventScroll: true });
-  };
-
   const expandGroupedSelection = (ids: readonly string[]) => [...new Set(ids.flatMap((id) =>
     selectionGroups.find((group) => group.includes(id)) ?? [id]))];
 
@@ -618,302 +609,180 @@ export default function App({ services }: Props) {
     return () => window.removeEventListener('keydown', handleShortcut);
   });
 
-  if (!currentProjectId) {
-    return <main className="editor-layout" aria-busy="true">
-      <p role={persistenceStatus === 'error' ? 'alert' : 'status'}>
-        {notice?.message ?? 'Opening project workspace…'}
-      </p>
-    </main>;
+  const commands: EditorPageCommands = {
+    history: {
+      undo: () => dispatch({ type: 'undo' }),
+      redo: () => dispatch({ type: 'redo' }),
+    },
+    projects: {
+      changeName: changeProjectName,
+      create: newProject,
+      open: openProject,
+      save: saveNow,
+      toggleStar,
+      delete: deleteProject,
+      export: exportProject,
+      import: importProject,
+      useAsTemplate: createFromTemplate,
+      resolveConflict: resolveProjectConflict,
+    },
+    recovery: {
+      exportWorkspace: exportWorkspaceArchive,
+      importWorkspace: importWorkspaceArchive,
+      exportQuarantined: exportQuarantinedRecord,
+      purgeQuarantined: purgeQuarantinedRecord,
+      requestPersistentStorage,
+    },
+    emoji: {
+      select: selectEmoji,
+      changePack: changePackSnapshot,
+    },
+    layers: {
+      select: (layerId, toggle) => toggle
+        ? dispatch({ type: 'select-layer', layerId, toggle: true })
+        : dispatch({
+            type: 'select-layers',
+            layerIds: expandGroupedSelection([layerId]),
+          }),
+      toggleVisibility: (layerId) => dispatch({ type: 'toggle-layer', layerId }),
+      move: (layerId, direction) => dispatch({ type: 'move-layer', layerId, direction }),
+      remove: (layerId) => dispatch({ type: 'remove-layer', layerId }),
+      rename: (layerId, name) => dispatch({ type: 'rename-layer', layerId, name }),
+      duplicate: (layerId) => {
+        const layer = editor.design.layers.find((candidate) => candidate.id === layerId);
+        if (layer) {
+          dispatch({
+            type: 'duplicate-layer',
+            layerId,
+            duplicateId: crypto.randomUUID(),
+            name: `${layer.name} copy`.slice(0, 80),
+          });
+        }
+      },
+      changeOpacity: (layerId, opacity, historyGroup) =>
+        dispatch({ type: 'set-layer-opacity', layerId, opacity, historyGroup }),
+      commit: () => dispatch({ type: 'commit-history-group' }),
+      add: addLayer,
+      update: (layer, historyGroup) => dispatch({
+        type: 'update-layer',
+        layer,
+        ...(historyGroup ? { historyGroup } : {}),
+      }),
+      align: alignSelected,
+      distribute: distributeSelected,
+      copySelection,
+      pasteSelection,
+      duplicateSelection,
+      groupSelection,
+      ungroupSelection,
+    },
+    canvas: {
+      changeTool: setTool,
+      changeBrush: setBrush,
+      changeSettings: setCanvasSettings,
+      paintStroke: (layerId, stroke, createLayerName) =>
+        dispatchForEditorSession(session.editorSessionEpoch, {
+          type: 'paint-stroke',
+          layerId,
+          stroke,
+          ...(createLayerName ? { createLayerName } : {}),
+        }),
+      maskStroke: (layerId, stroke) =>
+        dispatchForEditorSession(session.editorSessionEpoch, {
+          type: 'mask-stroke',
+          layerId,
+          stroke,
+        }),
+      changeTransforms: (updates, historyGroup) =>
+        dispatchForEditorSession(session.editorSessionEpoch, {
+          type: 'update-layer-transforms',
+          updates,
+          ...(historyGroup ? { historyGroup } : {}),
+        }),
+      changeSelection: (layerIds) =>
+        dispatchForEditorSession(session.editorSessionEpoch, {
+          type: 'select-layers',
+          layerIds: expandGroupedSelection(layerIds),
+        }),
+      addRasterLayer: (layer) =>
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'add-layer', layer }),
+      commitTransform: () =>
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' }),
+      changeSize: (size) =>
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-size', size }),
+    },
+    controls: {
+      changeProportionsLocked: setProportionsLocked,
+      changeTransform: (transform, historyGroup) => dispatch({
+        type: 'update-transform',
+        transform,
+        ...(historyGroup ? { historyGroup } : {}),
+      }),
+      changeAppearance: (appearance, historyGroup) => dispatch({
+        type: 'update-appearance',
+        appearance,
+        ...(historyGroup ? { historyGroup } : {}),
+      }),
+      applyStyle: (transform, appearance) =>
+        dispatch({ type: 'apply-layer-style', transform, appearance }),
+      commit: () => dispatch({ type: 'commit-history-group' }),
+      reset: () => dispatch({ type: 'reset' }),
+    },
+    notices: {
+      show: showNotice,
+      dismiss: () => setNotice(null),
+    },
+  };
+
+  let model: EditorPageViewModel;
+  if (currentProjectId === null) {
+    model = {
+      status: 'loading',
+      persistenceStatus,
+      notice,
+    };
+  } else {
+    const pickerEmojiLayer = editor.selectedLayerIds
+      .map((id) => getLayer(editor.design, id))
+      .find((layer) => layer?.kind === 'emoji') ?? getEmojiLayer(editor.design);
+    const attributionPacks = [...new Set(editor.design.layers
+      .filter((layer) => layer.kind === 'emoji')
+      .map((layer) => layer.source.pack))]
+      .map((pack) => services.catalog.summaryFor(pack))
+      .filter((summary) => summary !== null);
+    model = {
+      status: 'ready',
+      editor,
+      editorSessionEpoch: session.editorSessionEpoch,
+      projectName,
+      currentProjectId,
+      projects: presentedProjects,
+      persistenceStatus,
+      workspaceBusy,
+      recoveryBusy,
+      storageHealth,
+      workspaceIssues,
+      hasConflicts,
+      canUndo: canUndo(editor),
+      canRedo: canRedo(editor),
+      packs: packState,
+      pickerEmoji: pickerEmojiLayer.source.grapheme,
+      attributionPacks,
+      proportionsLocked,
+      tool,
+      brush,
+      canvasSettings,
+      notice,
+      catalog: services.catalog,
+      renderer: services.renderer,
+      assetDelivery: services.assetDelivery,
+    };
   }
 
-  const pickerEmojiLayer = editor.selectedLayerIds
-    .map((id) => getLayer(editor.design, id))
-    .find((layer) => layer?.kind === 'emoji') ?? getEmojiLayer(editor.design);
-  const attributionPacks = [...new Set(editor.design.layers
-    .filter((layer) => layer.kind === 'emoji')
-    .map((layer) => layer.source.pack))]
-    .map((pack) => services.catalog.summaryFor(pack))
-    .filter((summary) => summary !== null);
+  return <EditorExperience
+    model={model}
+    commands={commands}
+    experiments={experiments}
+  />;
 
-  return (
-    <>
-      <header className="app-header">
-        <div>
-          <h1>seemoji</h1>
-          <p>Shape, style, and share an emoji anywhere.</p>
-        </div>
-        <div className="history-actions" aria-label="Edit history">
-          <button disabled={workspaceBusy || !canUndo(editor)} onClick={() => dispatch({ type: 'undo' })}
-            title="Undo (⌘Z)">↶ Undo</button>
-          <button disabled={workspaceBusy || !canRedo(editor)} onClick={() => dispatch({ type: 'redo' })}
-            title="Redo (⇧⌘Z)">↷ Redo</button>
-        </div>
-      </header>
-
-      <ProjectBar name={projectName} projects={presentedProjects} currentId={currentProjectId}
-        persistenceStatus={persistenceStatus}
-        busy={workspaceBusy}
-        onNameChange={changeProjectName} onNew={() => void newProject()}
-        onOpen={(id) => void openProject(id)}
-        menu={<WorkspaceMenu
-          starred={presentedProjects.find((project) => project.id === currentProjectId)?.starredAt != null}
-          storageHealth={storageHealth}
-          busy={recoveryBusy || workspaceBusy}
-          onSaveNow={() => void saveNow()}
-          onToggleStar={() => void toggleStar()}
-          onDelete={() => void deleteProject()}
-          onExportProject={exportProject}
-          onImportProject={(file) => void importProject(file)}
-          onExportWorkspace={() => void exportWorkspaceArchive()}
-          onImportWorkspace={(file) => void importWorkspaceArchive(file)}
-          onRequestPersistence={() => void requestPersistentStorage()}
-        />} />
-
-      {hasConflicts && (
-        <section className="workspace-status-banner conflict" role="alert">
-          <div>
-            <strong>Concurrent edits are safe.</strong>
-            <span>Compare the preserved versions and choose what to keep.</span>
-          </div>
-          <button type="button" disabled={workspaceBusy} onClick={reviewConflicts}>Review versions</button>
-        </section>
-      )}
-      {workspaceBusy && (
-        <section className="workspace-status-banner" role="status">
-          <div>
-            <strong>Updating the project workspace…</strong>
-            <span>Editing will resume when the local transaction completes.</span>
-          </div>
-        </section>
-      )}
-      {persistenceStatus === 'error' && (
-        <section className="workspace-status-banner error" role="alert">
-          <div>
-            <strong>Local changes could not be saved.</strong>
-            <span>Your editor remains open. Try the save again before closing this tab.</span>
-          </div>
-          <button type="button" disabled={workspaceBusy} onClick={() => void saveNow()}>Try saving again</button>
-        </section>
-      )}
-
-      <WorkspaceRecoveryPanel
-        issues={workspaceIssues}
-        busy={recoveryBusy || workspaceBusy}
-        onExportQuarantined={(record) => void exportQuarantinedRecord(record)}
-        onPurgeQuarantined={(record) => void purgeQuarantinedRecord(record)}
-      />
-
-      <main className="editor-layout" inert={workspaceBusy} aria-busy={workspaceBusy}>
-        <div className="editor-panel-tabs" role="radiogroup" aria-label="Editing panels">
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="emoji-tab"
-            defaultChecked />
-          <label htmlFor="emoji-tab">Emoji</label>
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="layers-tab" />
-          <label htmlFor="layers-tab">Layers</label>
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="adjust-tab" />
-          <label htmlFor="adjust-tab">Adjust</label>
-        </div>
-        <section className="picker-region" aria-label="Emoji source">
-          <div className="emoji-panel-shell">
-            <EmojiPicker
-              emoji={pickerEmojiLayer.source.grapheme}
-              catalog={services.catalog}
-              snapshot={packState.selected}
-              packs={packState.packs}
-              onPick={selectEmoji}
-              onSnapshotChange={changePackSnapshot}
-            />
-          </div>
-          <div className="layers-panel-shell">
-            <LayersPanel
-            design={editor.design}
-            selectedLayerIds={editor.selectedLayerIds}
-            onSelect={(layerId, toggle) => toggle
-              ? dispatch({ type: 'select-layer', layerId, toggle: true })
-              : dispatch({ type: 'select-layers', layerIds: expandGroupedSelection([layerId]) })}
-            onToggle={(layerId) => dispatch({ type: 'toggle-layer', layerId })}
-            onMove={(layerId, direction) => dispatch({ type: 'move-layer', layerId, direction })}
-            onRemove={(layerId) => dispatch({ type: 'remove-layer', layerId })}
-            onRename={(layerId, name) => dispatch({ type: 'rename-layer', layerId, name })}
-            onDuplicate={(layerId) => {
-              const layer = editor.design.layers.find((candidate) => candidate.id === layerId);
-              if (layer) {
-                dispatch({
-                  type: 'duplicate-layer',
-                  layerId,
-                  duplicateId: crypto.randomUUID(),
-                  name: `${layer.name} copy`.slice(0, 80),
-                });
-              }
-            }}
-            onOpacityChange={(layerId, opacity, historyGroup) =>
-              dispatch({ type: 'set-layer-opacity', layerId, opacity, historyGroup })
-            }
-            onCommit={() => dispatch({ type: 'commit-history-group' })}
-            onAdd={addLayer}
-            onUpdate={(layer, historyGroup) => dispatch({ type: 'update-layer', layer,
-              ...(historyGroup ? { historyGroup } : {}) })}
-            onAlign={alignSelected}
-            onDistribute={distributeSelected}
-            onCopy={copySelection}
-            onPaste={pasteSelection}
-            onDuplicateSelection={duplicateSelection}
-            onGroup={groupSelection}
-            onUngroup={ungroupSelection}
-            />
-          </div>
-        </section>
-
-        <section className="preview-region" aria-label="Canvas and export">
-          <Preview
-            key={session.editorSessionEpoch}
-            design={editor.design}
-            size={editor.exportSize}
-            services={services}
-            packs={packState.packs}
-            proportionsLocked={proportionsLocked}
-            selectedLayerIds={editor.selectedLayerIds}
-            tool={tool}
-            brush={brush}
-            canvasSettings={canvasSettings}
-            onToolChange={setTool}
-            onBrushChange={setBrush}
-            onCanvasSettingsChange={setCanvasSettings}
-            onPaintStroke={(layerId, stroke, createLayerName) =>
-              dispatchForEditorSession(session.editorSessionEpoch, {
-                type: 'paint-stroke', layerId, stroke,
-                ...(createLayerName ? { createLayerName } : {}) })
-            }
-            onMaskStroke={(layerId, stroke) =>
-              dispatchForEditorSession(session.editorSessionEpoch, {
-                type: 'mask-stroke', layerId, stroke,
-              })
-            }
-            onTransformsChange={(updates, historyGroup) =>
-              dispatchForEditorSession(session.editorSessionEpoch, {
-                type: 'update-layer-transforms',
-                updates,
-                ...(historyGroup ? { historyGroup } : {}),
-              })
-            }
-            onSelectionChange={(layerIds) =>
-              dispatchForEditorSession(session.editorSessionEpoch, {
-                type: 'select-layers',
-                layerIds: expandGroupedSelection(layerIds),
-              })
-            }
-            onRasterLayer={(layer: RasterLayer) =>
-              dispatchForEditorSession(session.editorSessionEpoch, { type: 'add-layer', layer })
-            }
-            onTransformCommit={() =>
-              dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' })
-            }
-            onSizeChange={(size) =>
-              dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-size', size })
-            }
-            onNotice={showNotice}
-          />
-          {hasConflicts && (
-            <div ref={conflictPanelRef} tabIndex={-1} className="conflict-resolution-anchor">
-              <ConflictResolutionPanel
-                projects={presentedProjects}
-                renderer={services.renderer}
-                onResolve={(id, resolution) => void resolveProjectConflict(id, resolution)}
-              />
-            </div>
-          )}
-          <StarredProjectsBar
-            projects={presentedProjects}
-            renderer={services.renderer}
-            busy={workspaceBusy}
-            onOpen={(id) => void openProject(id)}
-            onUseAsTemplate={(id) => void createFromTemplate(id)}
-          />
-        </section>
-
-        <section className="controls-region" aria-label="Editing controls">
-          <Controls
-            design={editor.design}
-            proportionsLocked={proportionsLocked}
-            onProportionsLockedChange={setProportionsLocked}
-            onTransformChange={(transform, historyGroup) =>
-              dispatch({ type: 'update-transform', transform,
-                ...(historyGroup ? { historyGroup } : {}) })
-            }
-            onAppearanceChange={(appearance, historyGroup) =>
-              dispatch({ type: 'update-appearance', appearance,
-                ...(historyGroup ? { historyGroup } : {}) })
-            }
-            onApplyStyle={(transform, appearance) =>
-              dispatch({ type: 'apply-layer-style', transform, appearance })
-            }
-            onCommit={() => dispatch({ type: 'commit-history-group' })}
-            onReset={() => dispatch({ type: 'reset' })}
-          />
-        </section>
-
-      </main>
-
-      <footer className="app-footer">
-        <div>
-          {attributionPacks.length > 0 ? attributionPacks.map((summary, index) => (
-            <span key={summary.id}>
-              {index > 0 ? ' ' : ''}{summary.license.attribution} under{' '}
-              <a href={summary.license.noticeUrl} target="_blank" rel="noreferrer">
-                {summary.license.spdx}
-              </a>.
-            </span>
-          )) : <>
-            Emoji artwork by{' '}
-            <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noreferrer">
-              Twemoji
-            </a>{' '}
-            under{' '}
-            <a href="https://creativecommons.org/licenses/by/4.0/"
-              target="_blank" rel="noreferrer">CC BY 4.0</a>.
-          </>}
-        </div>
-        <button type="button" onClick={() => licensesDialogRef.current?.showModal()}>
-          All packs &amp; licenses
-        </button>
-      </footer>
-
-      <dialog ref={licensesDialogRef} className="licenses-dialog" aria-labelledby="licenses-title">
-        <div className="licenses-dialog-header">
-          <div>
-            <h2 id="licenses-title">Emoji packs &amp; licenses</h2>
-            <p>License terms for every pack available in this build.</p>
-          </div>
-          <button type="button" aria-label="Close licenses"
-            onClick={() => licensesDialogRef.current?.close()}>×</button>
-        </div>
-        <ul>
-          {packState.packs.map((summary) => (
-            <li key={summary.id}>
-              <strong>{summary.name}</strong>
-              <span>Unicode {summary.unicodeLevel} · version {summary.defaultVersion}</span>
-              <span>{summary.license.attribution}</span>
-              <a href={summary.license.noticeUrl} target="_blank" rel="noreferrer">
-                {summary.license.spdx}{summary.license.shareAlike ? ' · share-alike' : ''}
-              </a>
-            </li>
-          ))}
-        </ul>
-        <button type="button" onClick={() => licensesDialogRef.current?.close()}>Close</button>
-      </dialog>
-
-      {notice && (
-        <div
-          className={`notice ${notice.kind}`}
-          role={notice.kind === 'error' ? 'alert' : 'status'}
-          aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}
-        >
-          <span>{notice.message}</span>
-          <button aria-label="Dismiss notification" onClick={() => setNotice(null)}>
-            ×
-          </button>
-        </div>
-      )}
-    </>
-  );
 }
