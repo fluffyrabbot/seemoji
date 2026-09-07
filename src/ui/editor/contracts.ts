@@ -2,7 +2,7 @@ import type { EditorState, ExportSize } from '../../application/editor';
 import type { PackSessionSnapshot } from '../../application/packSession';
 import type { RenderCoordinator } from '../../application/renderCoordinator';
 import type { AssetDeliveryService } from '../../application/assetDelivery';
-import type { StorageHealth } from '../../application/services';
+import type { AppServices, StorageHealth } from '../../application/services';
 import type {
   ProjectConflictResolution,
   WorkspacePersistenceStatus,
@@ -91,6 +91,7 @@ export interface ReadyEditorPageViewModel {
   readonly catalog: EmojiPackCatalog;
   readonly renderer: RenderCoordinator;
   readonly assetDelivery: AssetDeliveryService;
+  readonly emojiStyles: AppServices['emojiStyles'];
 }
 
 export type EditorPageViewModel =
@@ -100,6 +101,10 @@ export type EditorPageViewModel =
 export type LayerKind = 'paint' | 'rectangle' | 'ellipse' | 'line' | 'text';
 export type Alignment = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 export type DistributionAxis = 'horizontal' | 'vertical';
+
+export type EmojiPickTarget =
+  | { readonly kind: 'add' }
+  | { readonly kind: 'replace'; readonly layerId: string };
 
 export interface EditorPageCommands {
   readonly history: {
@@ -129,8 +134,8 @@ export interface EditorPageCommands {
     readonly requestPersistentStorage: () => Promise<void>;
   };
   readonly emoji: {
-    readonly select: (grapheme: string) => Promise<boolean>;
-    readonly changePack: (snapshot: PackSnapshot) => Promise<void>;
+    readonly select: (grapheme: string, target: EmojiPickTarget) => Promise<boolean>;
+    readonly changePack: (snapshot: PackSnapshot, layerId: string | null) => Promise<void>;
   };
   readonly layers: {
     readonly select: (layerId: string, toggle: boolean) => void;
@@ -169,18 +174,23 @@ export interface EditorPageCommands {
       updates: readonly { readonly layerId: string; readonly transform: Transform }[],
       historyGroup?: string,
     ) => void;
-    readonly changeSelection: (layerIds: readonly string[]) => void;
+    readonly changeSelection: (layerIds: readonly string[]) => readonly string[];
     readonly addRasterLayer: (layer: RasterLayer) => void;
     readonly commitTransform: () => void;
     readonly changeSize: (size: ExportSize) => void;
   };
+  readonly groups: {
+    readonly select: (groupId: string) => void;
+    readonly rename: (groupId: string, name: string) => void;
+    readonly ungroup: (groupId: string) => void;
+  };
   readonly controls: {
     readonly changeProportionsLocked: (locked: boolean) => void;
-    readonly changeTransform: (transform: Transform, historyGroup?: string) => void;
-    readonly changeAppearance: (appearance: Appearance, historyGroup?: string) => void;
-    readonly applyStyle: (transform: Transform, appearance: Appearance) => void;
+    readonly changeTransform: (layerId: string, transform: Transform, historyGroup?: string) => void;
+    readonly changeAppearance: (layerId: string, appearance: Appearance, historyGroup?: string) => void;
+    readonly applyStyle: (layerId: string, transform: Transform, appearance: Appearance) => void;
     readonly commit: () => void;
-    readonly reset: () => void;
+    readonly reset: (layerIds: readonly string[]) => void;
   };
   readonly notices: {
     readonly show: (notice: Notice) => void;

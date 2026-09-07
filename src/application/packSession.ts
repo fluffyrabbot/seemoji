@@ -1,5 +1,6 @@
 import type { EditorAction } from './editor';
-import { getLayer, type DesignDocument } from '../domain/design';
+import { DEFAULT_EMOJI_LAYER, getLayer, type DesignDocument } from '../domain/design';
+import { DESIGN_CAPACITY } from '../domain/designCapacity';
 import { createEmojiAssetRef, toCodepoint, type EmojiAssetRef } from '../domain/emoji';
 import {
   DEFAULT_PACK_SNAPSHOT,
@@ -24,12 +25,16 @@ export type PackOperationResult =
   | { readonly kind: 'rejected'; readonly error: string }
   | { readonly kind: 'stale' };
 
+export type PackPickTarget =
+  | { readonly kind: 'add'; readonly layerId: string }
+  | { readonly kind: 'replace'; readonly layerId: string };
+
 interface PackOperation {
   readonly generation: number;
   readonly projectId: string;
   readonly editorSessionEpoch: number;
-  readonly layerId: string;
-  readonly source: EmojiAssetRef;
+  readonly target: PackPickTarget;
+  readonly source: EmojiAssetRef | null;
 }
 
 interface PackWorkspaceSnapshot {
@@ -153,10 +158,11 @@ export class PackSession {
     return this.#loadRequest;
   }
 
-  async pick(grapheme: string, layerId: string): Promise<PackOperationResult> {
-    await this.load();
-    const operation = this.#beginOperation(layerId);
+  async pick(grapheme: string, target: PackPickTarget): Promise<PackOperationResult> {
+    const operation = this.#beginOperation(target);
     if (!operation) return { kind: 'stale' };
+    await this.load();
+    if (!this.#isCurrent(operation)) return { kind: 'stale' };
     const selected = this.#snapshot.selected;
     let covered: boolean;
     try {
@@ -179,18 +185,37 @@ export class PackSession {
       return this.#rejectCurrent(operation, cause);
     }
     if (!this.#isCurrent(operation)) return { kind: 'stale' };
-    this.#workspace.dispatch({ type: 'set-emoji-source', layerId, source });
-    return { kind: 'applied' };
+    if (target.kind === 'add') {
+      if (this.#workspace.getSnapshot().editor.design.layers.length >= DESIGN_CAPACITY.layers) {
+        return { kind: 'rejected', error: `A design can contain up to ${DESIGN_CAPACITY.layers} objects.` };
+      }
+      this.#workspace.dispatch({ type: 'add-layer', layer: {
+        ...DEFAULT_EMOJI_LAYER,
+        id: target.layerId,
+        name: `${grapheme} Emoji`,
+        source,
+      } });
+    } else {
+      this.#workspace.dispatch({ type: 'set-emoji-source', layerId: target.layerId, source });
+    }
+    const committed = getLayer(this.#workspace.getSnapshot().editor.design, target.layerId);
+    return committed?.kind === 'emoji' && sameSource(committed.source, source)
+      ? { kind: 'applied' }
+      : { kind: 'stale' };
   }
 
   async changeSnapshot(
     requested: PackSnapshot,
-    layerId: string,
+    layerId: string | null,
   ): Promise<PackOperationResult> {
+    const operation = layerId === null ? null : this.#beginOperation({ kind: 'replace', layerId });
+    const generation = layerId === null ? ++this.#operationGeneration : operation?.generation;
+    if (generation === undefined) return { kind: 'stale' };
     await this.load();
+    if (generation !== this.#operationGeneration || (operation && !this.#isCurrent(operation))) {
+      return { kind: 'stale' };
+    }
     const target = resolvePackPreference(requested, this.#snapshot.packs);
-    const operation = this.#beginOperation(layerId);
-    if (!operation) return { kind: 'stale' };
 
     this.#set({
       ...this.#snapshot,
@@ -201,6 +226,7 @@ export class PackSession {
       .catch(() => undefined)
       .then(() => this.#preference.write(target))
       .catch(() => undefined);
+    if (!operation || !operation.source) return { kind: 'applied' };
     let remapped;
     try {
       remapped = await remapSource(operation.source, target, this.#catalog);
@@ -217,36 +243,38 @@ export class PackSession {
     if (!this.#isCurrent(operation)) return { kind: 'stale' };
     this.#workspace.dispatch({
       type: 'set-emoji-source',
-      layerId,
+      layerId: operation.target.layerId,
       source: remapped.value,
     });
     return { kind: 'applied' };
   }
 
-  #beginOperation(layerId: string): PackOperation | null {
+  #beginOperation(target: PackPickTarget): PackOperation | null {
     const generation = ++this.#operationGeneration;
     const requested = this.#workspace.getSnapshot();
     const projectId = requested.workspace?.activeProject.id;
-    const layer = getLayer(requested.editor.design, layerId);
-    if (!projectId || !this.#workspace.acceptsEditorMutations || layer?.kind !== 'emoji') return null;
+    const layer = getLayer(requested.editor.design, target.layerId);
+    if (!projectId || !this.#workspace.acceptsEditorMutations || !target.layerId
+        || (target.kind === 'add' ? !!layer : layer?.kind !== 'emoji')) return null;
     return {
       generation,
       projectId,
       editorSessionEpoch: requested.editorSessionEpoch,
-      layerId,
-      source: layer.source,
+      target,
+      source: layer?.kind === 'emoji' ? layer.source : null,
     };
   }
 
   #isCurrent(operation: PackOperation): boolean {
     const current = this.#workspace.getSnapshot();
-    const layer = getLayer(current.editor.design, operation.layerId);
+    const layer = getLayer(current.editor.design, operation.target.layerId);
     return operation.generation === this.#operationGeneration
       && this.#workspace.acceptsEditorMutations
       && current.workspace?.activeProject.id === operation.projectId
       && current.editorSessionEpoch === operation.editorSessionEpoch
-      && layer?.kind === 'emoji'
-      && sameSource(layer.source, operation.source);
+      && (operation.target.kind === 'add'
+        ? !layer
+        : layer?.kind === 'emoji' && operation.source !== null && sameSource(layer.source, operation.source));
   }
 
   #rejectCurrent(operation: PackOperation, cause: unknown): PackOperationResult {

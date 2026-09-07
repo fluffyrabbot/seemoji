@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DESIGN, DESIGN_LIMITS, updateEmojiLayer, type DesignDocument } from './design';
-import { createRenderPlan } from './renderPlan';
+import { DEFAULT_DESIGN, DEFAULT_EMOJI_LAYER, DESIGN_LIMITS, getEmojiLayer, updateEmojiLayer, type DesignDocument } from './design';
+import { createEmojiRenderPlan, createLayerMatrix, createRenderPlan } from './renderPlan';
 
 const extremeDesign: DesignDocument = updateEmojiLayer(DEFAULT_DESIGN, (layer) => ({
   ...layer,
@@ -24,13 +24,34 @@ const extremeDesign: DesignDocument = updateEmojiLayer(DEFAULT_DESIGN, (layer) =
 }));
 
 describe('render planning', () => {
-  it.each([48, 128, 256])('keeps maximum supported effects inside %ipx', (size) => {
+  it.each([48, 128, 256])('preserves explicit geometry at %ipx, including content outside the output', (size) => {
     const plan = createRenderPlan(extremeDesign, size);
-    expect(plan.contentBounds.left).toBeGreaterThanOrEqual(0);
-    expect(plan.contentBounds.top).toBeGreaterThanOrEqual(0);
-    expect(plan.contentBounds.right).toBeLessThanOrEqual(size);
-    expect(plan.contentBounds.bottom).toBeLessThanOrEqual(size);
+    expect(plan.matrix).toEqual(createLayerMatrix(getEmojiLayer(extremeDesign).transform, size));
+    expect(plan.contentBounds.left).toBeLessThan(0);
+    expect(plan.contentBounds.top).toBeLessThan(0);
+    expect(plan.contentBounds.right).toBeGreaterThan(size);
+    expect(plan.contentBounds.bottom).toBeGreaterThan(size);
     expect(Object.values(plan.matrix).every(Number.isFinite)).toBe(true);
+  });
+
+  it('doubles visible emoji geometry when scale doubles beyond the former fit ceiling', () => {
+    const base = { ...DEFAULT_EMOJI_LAYER, transform: { ...DEFAULT_EMOJI_LAYER.transform, scaleX: 1.5, scaleY: 1.5 } };
+    const large = { ...base, transform: { ...base.transform, scaleX: 3, scaleY: 3 } };
+    const first = createEmojiRenderPlan(base, 128);
+    const second = createEmojiRenderPlan(large, 128);
+    expect(second.matrix.a).toBe(2 * first.matrix.a);
+    expect(second.contentBounds.right - second.contentBounds.left)
+      .toBeCloseTo(2 * (first.contentBounds.right - first.contentBounds.left));
+  });
+
+  it('adds blur and outline padding without changing the layer matrix or glyph scale', () => {
+    const base = createEmojiRenderPlan(DEFAULT_EMOJI_LAYER, 128);
+    const effects = createEmojiRenderPlan({ ...DEFAULT_EMOJI_LAYER, appearance: {
+      ...DEFAULT_EMOJI_LAYER.appearance, blur: 0.08, outline: { width: 0.08, color: '#ffffff' },
+    } }, 128);
+    expect(effects.matrix).toEqual(base.matrix);
+    expect(effects.glyphSize).toBe(base.glyphSize);
+    expect(effects.contentBounds.left).toBeCloseTo(base.contentBounds.left - 128 * (0.08 * 3 + 0.08));
   });
 
   it('preserves composition ratios across export resolutions', () => {

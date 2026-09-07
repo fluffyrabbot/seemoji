@@ -139,6 +139,7 @@ const downloadedPng = async (page: Page) => {
 
 const openProjectMenu = async (page: Page) => {
   const menu = page.locator('.workspace-menu');
+  if (!await menu.isVisible()) await page.getByRole('button', { name: 'Projects', exact: true }).click();
   if (await menu.getAttribute('open') === null) {
     await menu.locator('summary').click();
   }
@@ -147,6 +148,75 @@ const openProjectMenu = async (page: Page) => {
 const runProjectAction = async (page: Page, name: string) => {
   await openProjectMenu(page);
   await page.getByRole('button', { name }).click();
+};
+
+const emojiSearch = (page: Page) => page.getByRole('searchbox', { name: 'Search emoji by name or paste an emoji' });
+const emojiChoice = (page: Page, emoji: string) => page.locator('.emoji-grid button').filter({
+  has: page.locator(`img`),
+}).and(page.getByRole('button', { name: new RegExp(`${emoji}$`, 'u') }));
+
+const findEmoji = async (page: Page, emoji: string) => {
+  await page.getByRole('button', { name: 'Change emoji', exact: true }).click();
+  await emojiSearch(page).fill(emoji);
+  await expect(emojiChoice(page, emoji)).toBeEnabled();
+};
+
+const pickEmoji = async (page: Page, emoji: string) => {
+  await findEmoji(page, emoji);
+  await emojiChoice(page, emoji).click();
+};
+
+const openDetails = async (page: Page, selector: string) => {
+  const details = page.locator(selector);
+  if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
+};
+const moreControls = (page: Page) => openDetails(page, '.more-controls');
+const artworkPacks = (page: Page) => openDetails(page, '.picker-pack-details');
+const chooseTool = async (page: Page, tool: string) => {
+  const tools = page.getByLabel('Canvas tools', { exact: true });
+  if (!await tools.isVisible()) await page.getByRole('button', { name: 'Draw & erase', exact: true }).click();
+  await tools.getByRole('button', { name: tool, exact: true }).click();
+};
+
+const exportProject = async (page: Page) => {
+  const pending = page.waitForEvent('download');
+  await runProjectAction(page, 'Export editable project');
+  const path = await (await pending).path();
+  if (!path) throw new Error('editable project download has no local path');
+  return JSON.parse(await readFile(path, 'utf8')) as {
+    readonly name: string;
+    readonly design: { readonly version: number; readonly groups: readonly {
+      readonly id: string; readonly name: string; readonly layerIds: readonly string[];
+    }[]; readonly layers: readonly {
+      readonly id: string;
+      readonly kind: string;
+      readonly name: string;
+      readonly text?: string;
+      readonly source?: { readonly grapheme: string };
+      readonly appearance?: {
+        readonly hue: number; readonly saturation: number; readonly brightness: number;
+        readonly blur: number; readonly outline: { readonly width: number; readonly color: string } | null;
+      };
+      readonly transform: {
+        readonly x: number; readonly y: number; readonly rotate: number;
+        readonly scaleX: number; readonly scaleY: number; readonly skewX: number; readonly skewY: number;
+        readonly flipH: boolean; readonly flipV: boolean;
+      };
+    }[] };
+  };
+};
+
+const mockClipboard = async (page: Page) => {
+  await page.evaluate(() => {
+    class TestClipboardItem {
+      static supports(type: string) { return type === 'image/png'; }
+      constructor(_items: Record<string, Blob>) {}
+    }
+    Object.defineProperty(window, 'ClipboardItem', { configurable: true, value: TestClipboardItem });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true, value: { write: async () => undefined },
+    });
+  });
 };
 
 test.beforeEach(async ({ page }) => {
@@ -230,14 +300,14 @@ test('does not apply delayed emoji validation to a different active project', as
     });
   });
 
-  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await pickEmoji(page, '😄');
   await validationStarted;
   await page.getByRole('button', { name: 'New' }).click();
   await expect(page.getByLabel('Open project').locator('option')).toHaveCount(3);
   await expect(page.getByLabel(/Preview of 😀/)).toBeVisible();
 
   releaseValidation();
-  await expect(page.getByRole('button', { name: 'Use 😄' })).toBeEnabled();
+  await expect(emojiChoice(page, '😄')).toBeEnabled();
   await expect(page.getByLabel(/Preview of 😀/)).toBeVisible();
 });
 
@@ -264,11 +334,12 @@ test('does not apply delayed emoji validation over a same-project remote design'
   await mockArtwork(second);
   await second.goto('/');
   await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await findEmoji(second, '😁');
   await openProjectMenu(second);
 
-  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await pickEmoji(page, '😄');
   await validationStarted;
-  await page.getByRole('button', { name: 'Eraser' }).click();
+  await chooseTool(page, 'Eraser');
   const stage = page.getByLabel(/Interactive emoji canvas/);
   const bounds = await stage.boundingBox();
   expect(bounds).not.toBeNull();
@@ -277,14 +348,14 @@ test('does not apply delayed emoji validation over a same-project remote design'
 
   // Firefox shares pointer input across pages. Synthetic activation models an
   // independent remote actor without completing the first tab's held gesture.
-  await second.getByRole('button', { name: 'Use 😁' }).dispatchEvent('click');
+  await emojiChoice(second, '😁').dispatchEvent('click');
   await expect(second.getByLabel(/Preview of 😁/)).toBeVisible();
   await second.getByRole('button', { name: 'Save now' }).dispatchEvent('click');
   await expect(page.getByLabel(/Preview of 😁/)).toBeVisible();
   await page.mouse.up();
 
   releaseValidation();
-  await expect(page.getByRole('button', { name: 'Use 😄' })).toBeEnabled();
+  await expect(emojiChoice(page, '😄')).toBeEnabled();
   await expect(page.getByLabel(/Preview of 😁/)).toBeVisible();
   const pendingDownload = page.waitForEvent('download');
   await runProjectAction(page, 'Export editable project');
@@ -303,20 +374,21 @@ test('does not apply delayed emoji validation over a same-project remote design'
   await second.close();
 });
 
-test('Flip rotates a half-turn without changing appearance or mirror settings', async ({ page }) => {
+test('Rotate 180° turns the selected object without changing appearance or mirror settings', async ({ page }) => {
+  await moreControls(page);
   const rotation = page.getByRole('spinbutton', { name: 'Rotate', exact: true });
   const saturation = page.getByRole('spinbutton', { name: 'Saturation', exact: true });
-  const flip = page.getByRole('button', { name: 'Flip', exact: true });
+  const flip = page.getByRole('button', { name: 'Rotate 180°', exact: true });
   await expect(page.getByRole('button', { name: 'Vivid', exact: true })).toHaveCount(0);
   await saturation.fill('1.25');
   await page.getByText('Advanced transforms').click();
-  await page.getByLabel('Flip vertically', { exact: true }).check();
+  await page.getByLabel('Mirror vertically', { exact: true }).check();
   await rotation.fill('37');
   await flip.click();
   await expect(rotation).toHaveValue('-143');
   await expect(saturation).toHaveValue('1.25');
-  await expect(page.getByLabel('Flip vertically', { exact: true })).toBeChecked();
-  await expect(page.getByLabel('Flip horizontally', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('Mirror vertically', { exact: true })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Mirror', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await page.getByRole('button', { name: 'Undo', exact: false }).click();
   await expect(rotation).toHaveValue('37');
   await page.getByRole('button', { name: 'Redo', exact: false }).click();
@@ -332,12 +404,13 @@ test('Flip rotates a half-turn without changing appearance or mirror settings', 
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator('label[for="adjust-tab"]').click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await flip.click();
   await expect(rotation).toHaveValue('-37');
 });
 
-test('maximum transforms and effects remain inside every export', async ({ page }) => {
+test('maximum transforms and effects clip consistently at the explicit export boundary', async ({ page }) => {
+  await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('137');
   await page.getByText('Advanced transforms').click();
   await page.getByLabel('Lock proportions').uncheck();
@@ -371,6 +444,7 @@ test('maximum transforms and effects remain inside every export', async ({ page 
 });
 
 test('supports direct movement, keyboard nudging, undo, and redo', async ({ page }) => {
+  await moreControls(page);
   const selection = page.locator('.selection-box');
   const bounds = await selection.boundingBox();
   expect(bounds).not.toBeNull();
@@ -395,7 +469,7 @@ test('supports direct movement, keyboard nudging, undo, and redo', async ({ page
 });
 
 test('paints, masks, orders, exports, and removes layers non-destructively', async ({ page }) => {
-  await page.getByRole('button', { name: /Brush/ }).click();
+  await chooseTool(page, 'Brush');
   const canvas = page.getByLabel(/Interactive emoji canvas/);
   const bounds = await canvas.boundingBox();
   expect(bounds).not.toBeNull();
@@ -427,11 +501,13 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   expect((await previewPixel(page, 256, 256))[1]).toBeGreaterThan(150);
   await page.getByRole('button', { name: 'Move “Paint 1” forward' }).click();
 
-  await page.getByRole('button', { name: /Eraser/ }).click();
+  await chooseTool(page, 'Eraser');
   await page.getByLabel('Brush size').fill('0.08');
-  await page.mouse.move(bounds!.x + bounds!.width * 0.35, y);
+  await canvas.scrollIntoViewIfNeeded();
+  const eraseBounds = (await canvas.boundingBox())!;
+  await page.mouse.move(eraseBounds.x + eraseBounds.width * 0.35, eraseBounds.y + eraseBounds.height / 2);
   await page.mouse.down();
-  await page.mouse.move(bounds!.x + bounds!.width * 0.65, y, { steps: 8 });
+  await page.mouse.move(eraseBounds.x + eraseBounds.width * 0.65, eraseBounds.y + eraseBounds.height / 2, { steps: 8 });
   await page.mouse.up();
   await expect(paintLayer).toContainText('1 stroke');
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
@@ -441,10 +517,12 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   expect(png).toMatchObject({ width: 128, height: 128 });
   expect(png.center[1]).toBeGreaterThan(150);
 
-  await page.getByRole('button', { name: 'Restore', exact: true }).click();
-  await page.mouse.move(bounds!.x + bounds!.width * 0.48, y);
+  await chooseTool(page, 'Restore');
+  await canvas.scrollIntoViewIfNeeded();
+  const restoreBounds = (await canvas.boundingBox())!;
+  await page.mouse.move(restoreBounds.x + restoreBounds.width * 0.48, restoreBounds.y + restoreBounds.height / 2);
   await page.mouse.down();
-  await page.mouse.move(bounds!.x + bounds!.width * 0.52, y, { steps: 4 });
+  await page.mouse.move(restoreBounds.x + restoreBounds.width * 0.52, restoreBounds.y + restoreBounds.height / 2, { steps: 4 });
   await page.mouse.up();
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 256, 256))[1]).toBe(79);
@@ -465,11 +543,12 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
 });
 
 test('keeps erase and restore masks attached through affine transforms', async ({ page }) => {
+  await moreControls(page);
   const viewport = page.getByLabel(/Interactive emoji canvas/);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('10');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
   await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('0.8');
-  await page.getByRole('button', { name: /Eraser/ }).click();
+  await chooseTool(page, 'Eraser');
   await page.getByLabel('Brush size').fill('0.08');
   const bounds = await viewport.boundingBox();
   expect(bounds).not.toBeNull();
@@ -490,7 +569,7 @@ test('keeps erase and restore masks attached through affine transforms', async (
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 0.235 * 512, 0.5 * 512))[3]).toBeLessThan(10);
 
-  await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await chooseTool(page, 'Restore');
   await page.getByLabel('Brush size').fill('0.024');
   await page.mouse.move(bounds!.x + bounds!.width * 0.232, bounds!.y + bounds!.height * 0.5);
   await page.mouse.down();
@@ -512,6 +591,7 @@ test('keeps erase and restore masks attached through affine transforms', async (
 });
 
 test('clips outlined and blurred emoji effects with the final transformed mask', async ({ page }) => {
+  await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('10');
   await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('-5');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
@@ -521,7 +601,7 @@ test('clips outlined and blurred emoji effects with the final transformed mask',
   await page.getByRole('spinbutton', { name: 'Outline width', exact: true }).fill('4');
 
   const viewport = page.getByLabel(/Interactive emoji canvas/);
-  await page.getByRole('button', { name: /Eraser/ }).click();
+  await chooseTool(page, 'Eraser');
   await page.getByLabel('Brush size').fill('0.05');
   const bounds = await viewport.boundingBox();
   expect(bounds).not.toBeNull();
@@ -578,7 +658,7 @@ test('maps masks through the full affine transform of non-emoji layers', async (
   await page.getByRole('button', { name: 'Hide “Emoji”' }).click();
 
   const viewport = page.getByLabel(/Interactive emoji canvas/);
-  await page.getByRole('button', { name: /Eraser/ }).click();
+  await chooseTool(page, 'Eraser');
   await page.getByLabel('Brush size').fill('0.05');
   const bounds = await viewport.boundingBox();
   expect(bounds).not.toBeNull();
@@ -593,13 +673,13 @@ test('maps masks through the full affine transform of non-emoji layers', async (
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 0.652703 * 512, 0.331035 * 512))[3]).toBeLessThan(10);
 
-  await page.getByRole('button', { name: /Select/ }).click();
+  await chooseTool(page, 'Select');
   await viewport.focus();
   await page.keyboard.press('Shift+ArrowRight');
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 0.702703 * 512, 0.331035 * 512))[3]).toBeLessThan(10);
 
-  await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await chooseTool(page, 'Restore');
   await page.getByLabel('Brush size').fill('0.012');
   const restoreBounds = await viewport.boundingBox();
   expect(restoreBounds).not.toBeNull();
@@ -617,7 +697,7 @@ test('maps masks through the full affine transform of non-emoji layers', async (
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 0.702703 * 512, 0.331035 * 512))[3]).toBeGreaterThan(200);
 
-  await page.getByRole('button', { name: /Select/ }).click();
+  await chooseTool(page, 'Select');
   await viewport.focus();
   await page.keyboard.press('Shift+ArrowDown');
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
@@ -626,7 +706,7 @@ test('maps masks through the full affine transform of non-emoji layers', async (
 });
 
 test('renames, duplicates, fades, and transforms a complete paint layer', async ({ page }) => {
-  await page.getByRole('button', { name: /Brush/ }).click();
+  await chooseTool(page, 'Brush');
   const viewport = page.getByLabel(/Interactive emoji canvas/);
   const bounds = await viewport.boundingBox();
   expect(bounds).not.toBeNull();
@@ -636,13 +716,15 @@ test('renames, duplicates, fades, and transforms a complete paint layer', async 
   await page.mouse.move(bounds!.x + bounds!.width * 0.65, y, { steps: 8 });
   await page.mouse.up();
 
+  await moreControls(page);
   await page.getByLabel('Name', { exact: true }).fill('Ink');
   await page.getByLabel('Name', { exact: true }).press('Enter');
   await page.getByRole('button', { name: 'Duplicate “Ink”' }).click();
   await expect(page.locator('.layer-select').filter({ hasText: 'Ink copy' })).toBeVisible();
   await page.getByRole('button', { name: 'Hide “Ink”' }).click();
 
-  const opacity = page.getByRole('slider', { name: 'Layer opacity' });
+  await moreControls(page);
+  const opacity = page.getByRole('slider', { name: 'Opacity slider', exact: true });
   await opacity.fill('0');
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 256, 256))[1]).toBeGreaterThan(150);
@@ -650,7 +732,7 @@ test('renames, duplicates, fades, and transforms a complete paint layer', async 
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 256, 256))[1]).toBe(79);
 
-  await page.getByRole('button', { name: /Select/ }).click();
+  await chooseTool(page, 'Select');
   const selection = page.locator('.selection-box');
   const selectionBounds = await selection.boundingBox();
   expect(selectionBounds).not.toBeNull();
@@ -675,7 +757,7 @@ test('creates structured layers, multi-selects, aligns, group-transforms, and fl
   await page.getByRole('button', { name: 'Add rectangle' }).click();
   await page.getByRole('button', { name: 'Add ellipse' }).click();
   await page.getByRole('button', { name: 'Add line' }).click();
-  await page.getByRole('button', { name: 'Add text' }).click();
+  await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
   await page.getByLabel('Text', { exact: true }).fill('Hello');
   await expect(page.getByLabel('Text', { exact: true })).toHaveValue('Hello');
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toBeVisible();
@@ -717,7 +799,7 @@ test('creates structured layers, multi-selects, aligns, group-transforms, and fl
 
   viewportBounds = await viewport.boundingBox();
   expect(viewportBounds).not.toBeNull();
-  await page.getByRole('button', { name: 'Fill', exact: true }).click();
+  await chooseTool(page, 'Fill');
   await viewport.click({ position: {
     x: viewportBounds!.width * 0.05,
     y: viewportBounds!.height * 0.05,
@@ -738,7 +820,7 @@ test('zooms and pans the transient viewport without changing export', async ({ p
 
   await page.getByRole('button', { name: 'Zoom in' }).click();
   await expect(page.getByLabel('Canvas zoom')).toHaveText('125%');
-  await page.getByRole('button', { name: /Pan/ }).click();
+  await chooseTool(page, 'Pan');
   const viewport = page.getByLabel(/Interactive emoji canvas/);
   const bounds = await viewport.boundingBox();
   expect(bounds).not.toBeNull();
@@ -757,19 +839,20 @@ test('zooms and pans the transient viewport without changing export', async ({ p
   expect(await downloadedPng(page)).toEqual(preview);
 });
 
-test('rejects a grapheme without artwork before changing the design', async ({ page }) => {
+test('rejects unrecognized search text without requesting non-emoji artwork', async ({ page }) => {
   const assetRequests: string[] = [];
   page.on('request', (request) => {
     if (request.url().endsWith('/41.svg')) assetRequests.push(request.url());
   });
-  await page.getByLabel('Paste another emoji').fill('A');
-  await page.getByRole('button', { name: 'Use', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('No Twemoji');
+  await emojiSearch(page).fill('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+  await expect(page.locator('.picker-search button[type="submit"]')).toBeDisabled();
+  await expect(page.locator('.picker-status')).toContainText('No emoji match');
   await expect(page.getByLabel('Preview of 😀')).toBeVisible();
   expect(assetRequests).toEqual([]);
 });
 
 test('switches among canonical pack artwork with explicit styled identity', async ({ page }) => {
+  await artworkPacks(page);
   const library = page.getByLabel('Emoji library', { exact: true });
   const selectPack = async (pack: string, name: string) => {
     await library.selectOption(pack);
@@ -876,6 +959,7 @@ test('switches among canonical pack artwork with explicit styled identity', asyn
 });
 
 test('serializes an immediate skin-tone pick behind a Fluent style change', async ({ page }) => {
+  await artworkPacks(page);
   const library = page.getByLabel('Emoji library', { exact: true });
   await library.selectOption('fluent');
   await expect(page.locator('.emoji-grid img').first()).toHaveAttribute(
@@ -896,12 +980,12 @@ test('serializes an immediate skin-tone pick behind a Fluent style change', asyn
   });
 
   const style = page.getByLabel('Emoji library style');
-  const input = page.getByLabel('Paste another emoji');
+  const input = page.getByRole('searchbox', { name: 'Search emoji by name or paste an emoji' });
   await style.selectOption('flat');
   await expect(input).toBeDisabled();
   releaseFlatValidation();
   await input.fill('👍🏻');
-  await page.getByRole('button', { name: 'Use', exact: true }).click();
+  await page.locator('.picker-search button[type="submit"]').click();
   await expect(page.getByLabel('Preview of 👍🏻')).toBeVisible();
 
   const pendingDownload = page.waitForEvent('download');
@@ -925,6 +1009,7 @@ test('serializes an immediate skin-tone pick behind a Fluent style change', asyn
 });
 
 test('keeps the design unchanged when a selected pack omits the active glyph', async ({ page }) => {
+  await artworkPacks(page);
   await page.route('**/packs/noto/2.042.0/manifest.json', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -939,27 +1024,17 @@ test('keeps the design unchanged when a selected pack omits the active glyph', a
 });
 
 test('confirms clipboard copy without naming a destination app', async ({ page }) => {
-  await page.evaluate(() => {
-    class TestClipboardItem {
-      static supports(type: string) { return type === 'image/png'; }
-      constructor(_items: Record<string, Blob>) {}
-    }
-    Object.defineProperty(window, 'ClipboardItem', { configurable: true, value: TestClipboardItem });
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { write: async () => undefined },
-    });
-  });
+  await mockClipboard(page);
   await page.getByRole('button', { name: 'Copy PNG' }).click();
   const notice = page.locator('.notice[role="status"]');
   await expect(notice).toHaveText(/PNG copied to your clipboard/);
   await expect(notice).not.toContainText('Discord');
 });
 
-test('persists starred projects and creates explicit template copies', async ({ page }) => {
+test('persists favorite projects and makes explicit copies', async ({ page }) => {
   await page.getByLabel('Project name').fill('tilty');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('22');
-  await runProjectAction(page, '☆ Add to templates');
+  await runProjectAction(page, '☆ Add favorite');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toBeVisible();
 
   await page.reload();
@@ -970,11 +1045,11 @@ test('persists starred projects and creates explicit template copies', async ({ 
   await page.getByRole('button', { name: 'tilty', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('22');
 
-  await page.getByRole('button', { name: 'Use “tilty” as a template' }).click();
+  await page.getByRole('button', { name: 'Make a copy of “tilty”' }).click();
   await expect(page.getByLabel('Project name')).toHaveValue('tilty copy');
   await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('22');
   await page.getByRole('button', { name: 'tilty', exact: true }).click();
-  await runProjectAction(page, '★ Remove from templates');
+  await runProjectAction(page, '★ Remove favorite');
   await expect(page.getByRole('button', { name: 'tilty', exact: true })).toHaveCount(0);
 });
 
@@ -1032,7 +1107,7 @@ test('autosaves projects, exports and imports JSON, and exposes workspace shortc
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toBeVisible();
 
   await page.getByLabel(/Interactive emoji canvas/).focus();
-  await page.keyboard.press('ControlOrMeta+B');
+  await page.keyboard.press('b');
   await expect(page.getByRole('button', { name: 'Brush', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('ControlOrMeta+A');
   await expect(page.locator('.layer-item.selected')).toHaveCount(2);
@@ -1232,7 +1307,7 @@ test('coordinates two tabs and preserves simultaneous edits as a conflict copy',
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Resolve concurrent edits' })).toBeVisible();
-  await expect(page.getByText('Original', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Resolve concurrent edits').getByText('Original', { exact: true })).toBeVisible();
   await expect(page.getByText('Conflict edit', { exact: true })).toBeVisible();
   await expect(second.getByRole('heading', { name: 'Resolve concurrent edits' })).toBeVisible();
 
@@ -1262,7 +1337,7 @@ test('cancels an in-progress canvas gesture when another tab switches projects',
   await second.goto('/');
   await expect(second.getByLabel('Project name')).toHaveValue('Gesture source');
 
-  await page.getByRole('button', { name: 'Eraser' }).click();
+  await chooseTool(page, 'Eraser');
   const stage = page.getByLabel(/Interactive emoji canvas/);
   const bounds = await stage.boundingBox();
   expect(bounds).not.toBeNull();
@@ -1294,7 +1369,7 @@ test('does not flood-fill pixels from a stale preview after a remote project swi
   await runProjectAction(page, 'Save now');
   await page.getByRole('button', { name: 'New' }).click();
   await page.getByLabel('Project name').fill('Fill destination');
-  await page.getByRole('button', { name: 'Use 😄' }).click();
+  await pickEmoji(page, '😄');
   await expect(page.getByLabel(/Preview of 😄/)).toBeVisible();
   await runProjectAction(page, 'Save now');
   await page.getByLabel('Open project').selectOption({ label: 'Fill source' });
@@ -1325,7 +1400,7 @@ test('does not flood-fill pixels from a stale preview after a remote project swi
   await renderStarted;
   await expect(page.getByLabel('Project name')).toHaveValue('Fill destination');
 
-  await page.getByRole('button', { name: 'Fill', exact: true }).click();
+  await chooseTool(page, 'Fill');
   await page.getByLabel(/Interactive emoji canvas/).click();
   await expect(page.locator('.notice')).toContainText('finish rendering before filling');
 
@@ -1370,30 +1445,403 @@ test('coordinates tabs through storage invalidation when BroadcastChannel is una
   await second.close();
 });
 
-test('prioritizes the preview and keeps every editor panel one tap away on a narrow screen', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const layout = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    viewportWidth: document.documentElement.clientWidth,
-    previewTop: document.querySelector('.preview-region')?.getBoundingClientRect().top,
-    pickerTop: document.querySelector('.picker-region')?.getBoundingClientRect().top,
-  }));
-  expect(layout.scrollWidth).toBe(layout.viewportWidth);
-  expect(layout.previewTop).toBeLessThan(layout.pickerTop ?? 0);
-
-  const tabs = page.getByRole('radiogroup', { name: 'Editing panels' });
-  await expect(tabs).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Emoji' })).toBeChecked();
-  await tabs.getByText('Layers', { exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Layers' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Pick an emoji' })).toBeHidden();
-  await tabs.getByText('Adjust', { exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Adjust' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Layers' })).toBeHidden();
-  const panelGap = await page.evaluate(() => {
-    const tabsRect = document.querySelector('.editor-panel-tabs')!.getBoundingClientRect();
-    const controlsRect = document.querySelector('.controls-region')!.getBoundingClientRect();
-    return Math.round(controlsRect.top - tabsRect.bottom);
+for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
+  test(`keeps the canvas and Copy PNG visible while editing at ${viewport.width} × ${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const tabs = page.getByLabel('Editing panels', { exact: true });
+    const canvas = page.getByLabel(/Interactive emoji canvas/);
+    const copy = page.getByRole('button', { name: 'Copy PNG', exact: true });
+    const assertPinnedPreview = async () => {
+      await expect(canvas).toBeInViewport({ ratio: 1 });
+      await expect(copy).toBeInViewport({ ratio: 1 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    };
+    await assertPinnedPreview();
+    await expect(tabs.getByRole('button', { name: 'Emoji', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await tabs.getByRole('button', { name: 'Objects', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Layers', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Find your emoji' })).toBeHidden();
+    await assertPinnedPreview();
+    await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
+    await expect(tabs.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByLabel('Text', { exact: true }).fill('hello');
+    await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('24');
+    await assertPinnedPreview();
+    await moreControls(page);
+    await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('10');
+    await assertPinnedPreview();
+    const panelGap = await page.evaluate(() => {
+      const tabsRect = document.querySelector('.editor-panel-tabs')!.getBoundingClientRect();
+      const controlsRect = document.querySelector('.controls-region')!.getBoundingClientRect();
+      return Math.round(controlsRect.top - tabsRect.bottom);
+    });
+    expect(panelGap).toBeLessThanOrEqual(16);
+    await page.getByRole('button', { name: 'Change emoji', exact: true }).click();
+    await expect(emojiSearch(page)).toBeFocused();
+    await assertPinnedPreview();
   });
-  expect(panelGap).toBeLessThanOrEqual(40);
+}
+
+// Primary remix journeys exercise the editor as a cohesive workflow.
+test('searches by meaning, applies Squish, and copies the resulting PNG', async ({ page }) => {
+  await mockClipboard(page);
+  await emojiSearch(page).fill('cool');
+  await page.locator('.picker-search button[type="submit"]').click();
+  await expect(page.getByLabel('Preview of 😎')).toBeVisible();
+  await page.getByRole('button', { name: 'Squish', exact: true }).click();
+  const project = await exportProject(page);
+  const layer = project.design.layers[0]!;
+  expect(layer.source?.grapheme).toBe('😎');
+  expect(layer.transform.scaleX / layer.transform.scaleY).toBeCloseTo(1.5);
+  await page.getByRole('button', { name: 'Copy PNG', exact: true }).click();
+  await expect(page.locator('.notice[role="status"]')).toContainText('PNG copied to your clipboard');
+});
+
+test('adds text, rotates only the selected text, and undoes or resets without deleting objects', async ({ page }) => {
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('12');
+  await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
+  await page.getByLabel('Text', { exact: true }).fill('hello');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
+  let project = await exportProject(page);
+  expect(project.design.layers.find(({ kind }) => kind === 'emoji')?.transform.rotate).toBe(12);
+  expect(project.design.layers.find(({ kind }) => kind === 'text')).toMatchObject({ text: 'hello', transform: { rotate: 35 } });
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('0');
+  await page.getByRole('button', { name: /Redo/ }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Rotate', exact: true })).toHaveValue('35');
+  await page.getByRole('button', { name: 'Reset selected edits', exact: true }).click();
+  project = await exportProject(page);
+  expect(project.design.layers).toHaveLength(2);
+  expect(project.design.layers.find(({ kind }) => kind === 'emoji')?.transform.rotate).toBe(12);
+  expect(project.design.layers.find(({ kind }) => kind === 'text')).toMatchObject({ text: 'hello', transform: { rotate: 0 } });
+});
+
+test('adds a second emoji and replaces that explicit selection while preserving the original', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add emoji', exact: true }).click();
+  await pickEmoji(page, '🍕');
+  let project = await exportProject(page);
+  expect(project.design.layers.map(({ source }) => source?.grapheme)).toEqual(['😀', '🍕']);
+  const addedId = project.design.layers[1]!.id;
+  await pickEmoji(page, '🐱');
+  project = await exportProject(page);
+  expect(project.design.layers.map(({ source }) => source?.grapheme)).toEqual(['😀', '🐱']);
+  expect(project.design.layers[1]!.id).toBe(addedId);
+  await page.locator('.layer-select').filter({ hasText: '😀' }).click();
+  await expect(page.getByRole('button', { name: 'Replace selected', exact: true }))
+    .toHaveAttribute('aria-pressed', 'true');
+  await pickEmoji(page, '👍');
+  project = await exportProject(page);
+  expect(project.design.layers.map(({ source }) => source?.grapheme)).toEqual(['👍', '🐱']);
+});
+
+test('deselects on blank canvas and selects an unselected object with the same gesture that moves it', async ({ page }) => {
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('0.6');
+  const before = await exportProject(page);
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await stage.scrollIntoViewIfNeeded();
+  const bounds = (await stage.boundingBox())!;
+  await stage.click({ position: { x: bounds.width * 0.04, y: bounds.height * 0.04 } });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  await expect(page.locator('.controls-region').getByRole('heading', { name: 'Canvas', exact: true })).toBeVisible();
+
+  // No preparatory click: this first pointerdown both selects and starts moving.
+  await page.mouse.move(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.62, bounds.y + bounds.height * 0.57, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  const after = await exportProject(page);
+  expect(after.design.layers).toHaveLength(1);
+  expect(after.design.layers[0]!.id).toBe(before.design.layers[0]!.id);
+  expect(after.design.layers[0]!.transform.x).toBeGreaterThan(0.08);
+  expect(after.design.layers[0]!.transform.y).toBeGreaterThan(0.03);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before.design);
+});
+
+test('moves every grouped object on the first drag of an unselected group member', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-12');
+  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('12');
+  await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Group', exact: true }).click();
+  await expect(page.locator('.notice')).toContainText('Grouped 2 layers');
+  const before = await exportProject(page);
+
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await stage.scrollIntoViewIfNeeded();
+  const bounds = (await stage.boundingBox())!;
+  await stage.click({ position: { x: bounds.width * 0.04, y: bounds.height * 0.04 } });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  // The left edge belongs only to Rectangle; Ellipse joins through the group.
+  await page.mouse.move(bounds.x + bounds.width * 0.3, bounds.y + bounds.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.38, bounds.y + bounds.height * 0.56, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  const after = await exportProject(page);
+  expect(after.design.layers).toHaveLength(3);
+  const movement = ['Rectangle', 'Ellipse'].map((name) => {
+    const original = before.design.layers.find((layer) => layer.name === name)!;
+    const moved = after.design.layers.find((layer) => layer.id === original.id)!;
+    return { x: moved.transform.x - original.transform.x, y: moved.transform.y - original.transform.y };
+  });
+  expect(movement[0]!.x).toBeGreaterThan(0.04);
+  expect(movement[0]!.y).toBeGreaterThan(0.02);
+  expect(movement[1]!.x).toBeCloseTo(movement[0]!.x, 4);
+  expect(movement[1]!.y).toBeCloseTo(movement[0]!.y, 4);
+  expect(after.design.layers.find(({ kind }) => kind === 'emoji'))
+    .toEqual(before.design.layers.find(({ kind }) => kind === 'emoji'));
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before.design);
+});
+
+for (const tool of ['Brush', 'Fill'] as const) {
+  test(`pinches and pans with two touches in ${tool} without committing artwork`, async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', 'Real simultaneous touch pointers require the Chromium CDP touch input API.');
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const before = await exportProject(page);
+    await chooseTool(page, tool);
+    const stage = page.getByLabel(/Interactive emoji canvas/);
+    await stage.scrollIntoViewIfNeeded();
+    const bounds = (await stage.boundingBox())!;
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+    const point = (id: number, x: number, y: number) => ({
+      id, x: bounds.x + bounds.width * x, y: bounds.y + bounds.height * y,
+      radiusX: 1, radiusY: 1, force: 0.5,
+    });
+    let touching = false;
+    const touch = async (type: 'touchStart' | 'touchMove' | 'touchEnd', touchPoints: ReturnType<typeof point>[]) => {
+      await cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+      touching = touchPoints.length > 0;
+    };
+    try {
+      // The first finger may draft a brush stroke, but a fill must wait for release.
+      await touch('touchStart', [point(11, 0.4, 0.5)]);
+      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await touch('touchMove', [point(11, 0.42, 0.5)]);
+      if (tool === 'Brush') await expect(page.locator('.draft-overlay')).toBeVisible();
+      await touch('touchStart', [point(11, 0.42, 0.5), point(22, 0.65, 0.5)]);
+      await expect(page.locator('.draft-overlay')).toHaveCount(0);
+      await touch('touchMove', [point(11, 0.25, 0.5), point(22, 0.85, 0.5)]);
+      await expect.poll(async () => Number((await page.getByLabel('Canvas zoom').textContent())?.replace('%', '')))
+        .toBeGreaterThan(150);
+      // CDP touchMove supplies the remaining active contacts; touchEnd releases all.
+      await touch('touchMove', [point(11, 0.25, 0.5)]);
+      const beforePan = await page.locator('.canvas-world').getAttribute('style');
+      await touch('touchMove', [point(11, 0.3, 0.55)]);
+      await expect(page.locator('.canvas-world')).not.toHaveAttribute('style', beforePan!);
+      await touch('touchEnd', []);
+      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await expect(page.getByRole('button', { name: /Undo/ })).toBeDisabled();
+      await expect(page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: tool, exact: true }))
+        .toHaveAttribute('aria-pressed', 'true');
+      expect((await exportProject(page)).design).toEqual(before.design);
+
+      // Ending navigation must leave the tool usable for the next single touch.
+      await page.getByRole('button', { name: 'Fit', exact: true }).click();
+      await stage.scrollIntoViewIfNeeded();
+      const nextBounds = (await stage.boundingBox())!;
+      const nextPoint = { id: 33, x: nextBounds.x + nextBounds.width * 0.5,
+        y: nextBounds.y + nextBounds.height * 0.5, radiusX: 1, radiusY: 1, force: 0.5 };
+      await touch('touchStart', [nextPoint]);
+      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await touch('touchEnd', []);
+      await expect(page.locator('.layer-item')).toHaveCount(2);
+      const afterTap = await exportProject(page);
+      expect(afterTap.design.layers[1]!.kind).toBe(tool === 'Brush' ? 'strokes' : 'raster');
+      await page.getByRole('button', { name: /Undo/ }).click();
+      expect((await exportProject(page)).design).toEqual(before.design);
+      expect(pageErrors).toEqual([]);
+    } finally {
+      if (touching) await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      await cdp.detach();
+    }
+  });
+}
+
+const pngSamples = async (page: Page, points: readonly { x: number; y: number }[]) => {
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download PNG' }).click();
+  const path = await (await pending).path();
+  if (!path) throw new Error('PNG download has no path');
+  const base64 = (await readFile(path)).toString('base64');
+  return page.evaluate(async ({ base64, points }) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return points.map(({ x, y }) => [...context.getImageData(
+      Math.floor(x * canvas.width), Math.floor(y * canvas.height), 1, 1,
+    ).data]);
+  }, { base64, points });
+};
+
+test('enlarges emoji without implicit fitting and crops at the canvas edge', async ({ page }) => {
+  const initial = await alphaBounds(page);
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('1.5');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  const enlarged = await alphaBounds(page);
+  expect((enlarged.right - enlarged.left) / (initial.right - initial.left)).toBeCloseTo(1.5, 1);
+  await page.getByRole('spinbutton', { name: 'Size', exact: true }).fill('2');
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await previewPixel(page, 2, 256))[3]).toBe(255);
+  expect((await previewPixel(page, 510, 256))[3]).toBe(255);
+  for (const size of ['48', '128', '256']) {
+    await page.getByLabel('Export size').selectOption(size);
+    await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+    const samples = await pngSamples(page, [{ x: 0.01, y: 0.5 }, { x: 0.99, y: 0.5 }]);
+    expect(samples.map((pixel) => pixel[3])).toEqual([255, 255]);
+  }
+});
+
+test('mirrored group rotation matches inspector, canvas handles, and exported pixels', async ({ page }) => {
+  const transform = { x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1,
+    skewX: 0, skewY: 0, flipH: false, flipV: false };
+  const shape = { kind: 'shape', visible: true, opacity: 1, mask: [], shape: 'rectangle',
+    bounds: { x: 0.45, y: 0.35, width: 0.2, height: 0.1 }, stroke: null };
+  // Importing a v2 document also exercises migration into the durable group format.
+  const design = { version: 2, canvas: { background: 'transparent' }, layers: [
+    { id: 'emoji-1', kind: 'emoji', name: 'Emoji', visible: false, opacity: 1, mask: [], transform,
+      source: { pack: 'twemoji', packVersion: '15.1.0', codepoint: '1f600', grapheme: '😀' },
+      appearance: { hue: 0, saturation: 1, brightness: 1, blur: 0, outline: null } },
+    { ...shape, id: 'red', name: 'Red arm', fill: '#ff0000', transform: { ...transform, x: -0.2 } },
+    { ...shape, id: 'blue', name: 'Blue arm', fill: '#0000ff', transform: { ...transform, x: 0.2, flipH: true } },
+  ] };
+  await openProjectMenu(page);
+  await page.getByLabel('Import editable project').setInputFiles({ name: 'rotation.json',
+    mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(design)) });
+  await page.locator('.layer-select').filter({ hasText: 'Red arm' }).click();
+  await page.locator('.layer-select').filter({ hasText: 'Blue arm' }).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Group', exact: true }).click();
+  const baseline = await exportProject(page);
+  expect(baseline.design.groups).toHaveLength(1);
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).blur();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  // Independent quarter-turn geometry about group bounds center (0.5, 0.4):
+  // red's center (0.35,0.4) becomes (0.5,0.25), blue's (0.65,0.4) becomes (0.5,0.55).
+  const points = [{ x: 0.5, y: 0.25 }, { x: 0.5, y: 0.55 }, { x: 0.35, y: 0.4 }];
+  const expected = [[255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 0, 0]];
+  for (const [index, point] of points.entries()) {
+    expect(await previewPixel(page, point.x * 512, point.y * 512)).toEqual(expected[index]);
+  }
+  expect(await pngSamples(page, points)).toEqual(expected);
+  const inspector = await exportProject(page);
+  expect(inspector.design.layers.find(({ id }) => id === 'red')!.transform.rotate).toBe(90);
+  expect(inspector.design.layers.find(({ id }) => id === 'blue')!.transform.rotate).toBe(-90);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(baseline.design);
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await stage.scrollIntoViewIfNeeded();
+  const box = (await stage.boundingBox())!;
+  const handle = (await page.locator('.rotate-handle').boundingBox())!;
+  const start = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+  const pivot = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.4 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(pivot.x - (start.y - pivot.y), pivot.y + (start.x - pivot.x), { steps: 8 });
+  await page.mouse.up();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect(await pngSamples(page, points)).toEqual(expected);
+  const dragged = await exportProject(page);
+  for (const layer of inspector.design.layers.filter(({ kind }) => kind === 'shape')) {
+    const actual = dragged.design.layers.find(({ id }) => id === layer.id)!.transform;
+    expect(actual.x).toBeCloseTo(layer.transform.x, 2);
+    expect(actual.y).toBeCloseTo(layer.transform.y, 2);
+    expect(actual.rotate).toBeCloseTo(layer.transform.rotate, 0);
+  }
+});
+
+test('saves a reusable style across reload and applies it only to the selected emoji', async ({ page }) => {
+  await page.getByRole('button', { name: 'Tilt', exact: true }).click();
+  await page.getByRole('button', { name: 'Sticker', exact: true }).click();
+  await page.getByRole('button', { name: 'Mirror', exact: true }).click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-12');
+  await openDetails(page, '.saved-styles-details');
+  await page.getByRole('textbox', { name: 'Style name', exact: true }).fill('Party sticker');
+  await page.getByRole('button', { name: 'Save style', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toBeVisible();
+  const original = (await exportProject(page)).design.layers[0]!;
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await openDetails(page, '.saved-styles-details');
+  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toBeVisible();
+  await findEmoji(page, '😎');
+  await page.getByRole('button', { name: 'Add emoji', exact: true }).click();
+  await emojiChoice(page, '😎').click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('18');
+  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('9');
+  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).blur();
+  const before = await exportProject(page);
+  const target = before.design.layers.find(({ id }) => id !== original.id)!;
+  await openDetails(page, '.saved-styles-details');
+  await page.getByRole('button', { name: 'Apply Party sticker', exact: true }).click();
+  const after = await exportProject(page);
+  expect(after.design.layers.find(({ id }) => id === original.id)).toEqual(original);
+  expect(after.design.layers.find(({ id }) => id === target.id)).toEqual({
+    ...target, transform: { ...original.transform, x: target.transform.x, y: target.transform.y },
+    appearance: original.appearance,
+  });
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before.design);
+  await openDetails(page, '.saved-styles-details');
+  await page.getByRole('button', { name: 'Delete Party sticker', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await openDetails(page, '.saved-styles-details');
+  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toHaveCount(0);
+});
+
+test('keeps named groups through history, reload, duplication, and project import', async ({ page }) => {
+  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Group', exact: true }).click();
+  await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
+  await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
+  const named = await exportProject(page);
+  expect(named.design.version).toBe(3);
+  expect(named.design.groups).toHaveLength(1);
+  expect(named.design.groups[0]!.name).toBe('Badge');
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.groups[0]!.name).not.toBe('Badge');
+  await page.getByRole('button', { name: /Redo/ }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'Rename group “Badge”', exact: true })).toHaveValue('Badge');
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.getByLabel(/Interactive emoji canvas/).click({ modifiers: ['Shift'] });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Duplicate selection', exact: true }).click();
+  const duplicated = await exportProject(page);
+  expect(duplicated.design.groups).toHaveLength(2);
+  expect(new Set(duplicated.design.groups.flatMap(({ layerIds }) => layerIds)).size).toBe(4);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.groups).toEqual(named.design.groups);
+  await openProjectMenu(page);
+  await page.getByLabel('Import editable project').setInputFiles({ name: 'grouped.json',
+    mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(named)) });
+  await expect(page.getByRole('textbox', { name: 'Rename group “Badge”', exact: true })).toBeVisible();
+  expect((await exportProject(page)).design.groups).toEqual(named.design.groups);
+  await page.getByRole('button', { name: 'Ungroup “Badge”', exact: true }).click();
+  expect((await exportProject(page)).design.groups).toEqual([]);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.groups).toEqual(named.design.groups);
 });

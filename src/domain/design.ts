@@ -133,7 +133,20 @@ export interface DesignDocumentV2 {
   readonly layers: readonly SceneLayer[];
 }
 
-export type DesignDocument = DesignDocumentV2;
+/** A named selection unit. Groups do not alter paint order or compositing. */
+export interface SelectionGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly layerIds: readonly string[];
+}
+
+export interface DesignDocumentV3 extends Omit<DesignDocumentV2, 'version'> {
+  readonly version: 3;
+  /** Flat, non-overlapping membership; each group contains at least two layers. */
+  readonly groups: readonly SelectionGroup[];
+}
+
+export type DesignDocument = DesignDocumentV3;
 
 export const DESIGN_LIMITS = {
   x: [-0.5, 0.5],
@@ -188,10 +201,11 @@ export const DEFAULT_EMOJI_LAYER: EmojiLayer = {
   mask: [],
 };
 
-export const DEFAULT_DESIGN: DesignDocumentV2 = {
-  version: 2,
+export const DEFAULT_DESIGN: DesignDocument = {
+  version: 3,
   canvas: { background: 'transparent' },
   layers: [DEFAULT_EMOJI_LAYER],
+  groups: [],
 };
 
 export function getEmojiLayer(design: DesignDocument): EmojiLayer {
@@ -203,7 +217,7 @@ export function getEmojiLayer(design: DesignDocument): EmojiLayer {
 export function replaceEmojiLayer(
   design: DesignDocument,
   replacement: EmojiLayer,
-): DesignDocumentV2 {
+): DesignDocument {
   return {
     ...design,
     layers: design.layers.map((layer) =>
@@ -219,7 +233,7 @@ export function getLayer(design: DesignDocument, id: string): SceneLayer | undef
 export function replaceLayer(
   design: DesignDocument,
   replacement: SceneLayer,
-): DesignDocumentV2 {
+): DesignDocument {
   return {
     ...design,
     layers: design.layers.map((layer) =>
@@ -231,11 +245,11 @@ export function replaceLayer(
 export function updateEmojiLayer(
   design: DesignDocument,
   update: (layer: EmojiLayer) => EmojiLayer,
-): DesignDocumentV2 {
+): DesignDocument {
   return replaceEmojiLayer(design, update(getEmojiLayer(design)));
 }
 
-export function resetDesign(design: DesignDocument): DesignDocumentV2 {
+export function resetDesign(design: DesignDocument): DesignDocument {
   const source = getEmojiLayer(design).source;
   return {
     ...DEFAULT_DESIGN,

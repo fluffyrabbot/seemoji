@@ -20,15 +20,17 @@ import type {
 import {
   DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
-  getEmojiLayer,
   getLayer,
   type DesignDocument,
   type SceneLayer,
+  type SelectionGroup,
 } from '../domain/design';
 import { decodeDesignDocument } from '../domain/designCodec';
 import { decodeProject, type Project } from '../domain/project';
 import type { ProjectQuarantineRecord } from '../domain/projectQuarantine';
 import { layerWorldBounds, unionWorldBounds } from '../domain/sceneGeometry';
+import { copySelectionGroups } from '../domain/selectionGroups';
+import { translateSelection } from '../domain/selectionTransforms';
 import EditorExperience from './experiments/EditorExperience';
 import type { EditorExperimentClient } from './experiments/contracts';
 import type {
@@ -37,6 +39,7 @@ import type {
   EditorPageCommands,
   EditorPageViewModel,
   EditorTool,
+  EmojiPickTarget,
   Notice,
 } from './editor/contracts';
 
@@ -80,7 +83,6 @@ export default function App({ services, experiments }: Props) {
     useState<'loading' | 'saved' | 'saving' | 'reconciling' | 'conflict' | 'error'>('loading');
   const workspaceBusy = session.workspaceMutationInProgress
     || persistenceStatus === 'reconciling';
-  const [selectionGroups, setSelectionGroups] = useState<readonly (readonly string[])[]>([]);
   const [proportionsLocked, setProportionsLocked] = useState(true);
   const [tool, setTool] = useState<EditorTool>('select');
   const [brush, setBrush] = useState<BrushSettings>({
@@ -101,12 +103,17 @@ export default function App({ services, experiments }: Props) {
   });
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
-  const layerClipboard = useRef<readonly SceneLayer[]>([]);
+  const layerClipboard = useRef<{ readonly layers: readonly SceneLayer[]; readonly groups: readonly SelectionGroup[] }>({
+    layers: [], groups: [],
+  });
   const previousProjectId = useRef<string | null>(null);
 
   const dispatch = useCallback((action: EditorAction) => {
-    if (!workspaceBusy) services.workspace.dispatch(action);
-  }, [services.workspace, workspaceBusy]);
+    if (!workspaceBusy
+        && services.workspace.getSnapshot().editorSessionEpoch === session.editorSessionEpoch) {
+      services.workspace.dispatch(action);
+    }
+  }, [services.workspace, workspaceBusy, session.editorSessionEpoch]);
 
   const dispatchForEditorSession = useCallback((
     expectedEpoch: number,
@@ -117,8 +124,9 @@ export default function App({ services, experiments }: Props) {
       current.editorSessionEpoch === expectedEpoch
       && services.workspace.acceptsEditorMutations
     ) {
-      services.workspace.dispatch(action);
+      return services.workspace.dispatch(action);
     }
+    return null;
   }, [services.workspace]);
 
   const changeProjectName = useCallback((name: string) => {
@@ -138,7 +146,6 @@ export default function App({ services, experiments }: Props) {
   useEffect(() => {
     if (previousProjectId.current === currentProjectId) return;
     previousProjectId.current = currentProjectId;
-    setSelectionGroups([]);
     setTool('select');
   }, [currentProjectId]);
 
@@ -237,28 +244,23 @@ export default function App({ services, experiments }: Props) {
     catch { /* Editing remains available when preferences cannot be stored. */ }
   }, [canvasSettings]);
 
-  const selectEmoji = async (grapheme: string): Promise<boolean> => {
-    const current = services.workspace.getSnapshot();
-    const layer = current.editor.selectedLayerIds
-      .map((id) => getLayer(current.editor.design, id))
-      .find((candidate) => candidate?.kind === 'emoji') ?? getEmojiLayer(current.editor.design);
-    const result = await services.packs.pick(grapheme, layer.id);
+  const selectEmoji = async (grapheme: string, target: EmojiPickTarget): Promise<boolean> => {
+    if (services.workspace.getSnapshot().editorSessionEpoch !== session.editorSessionEpoch) return false;
+    const result = await services.packs.pick(grapheme, target.kind === 'add'
+      ? { kind: 'add', layerId: crypto.randomUUID() } : target);
     if (result.kind === 'rejected') showNotice({ kind: 'error', message: result.error });
+    if (result.kind === 'applied') setTool('select');
     return result.kind === 'applied';
   };
 
-  const changePackSnapshot = async (target: typeof packState.selected): Promise<void> => {
-    const current = services.workspace.getSnapshot();
-    const layer = current.editor.selectedLayerIds
-      .map((id) => getLayer(current.editor.design, id))
-      .find((candidate) => candidate?.kind === 'emoji') ?? getEmojiLayer(current.editor.design);
-    const result = await services.packs.changeSnapshot(target, layer.id);
+  const changePackSnapshot = async (target: typeof packState.selected, layerId: string | null): Promise<void> => {
+    if (services.workspace.getSnapshot().editorSessionEpoch !== session.editorSessionEpoch) return;
+    const result = await services.packs.changeSnapshot(target, layerId);
     if (result.kind === 'rejected') showNotice({ kind: 'error', message: result.error });
   };
 
   const applyWorkspace = (_workspace: WorkspaceSnapshot) => {
     setTool('select');
-    setSelectionGroups([]);
   };
 
   const saveNow = async () => {
@@ -474,37 +476,47 @@ export default function App({ services, experiments }: Props) {
     : project), [currentProjectId, editor.design, projectName, projects]);
   const hasConflicts = presentedProjects.some((project) => project.conflict !== null);
 
-  const expandGroupedSelection = (ids: readonly string[]) => [...new Set(ids.flatMap((id) =>
-    selectionGroups.find((group) => group.includes(id)) ?? [id]))];
-
   const copySelection = () => {
-    layerClipboard.current = selectedLayers;
+    layerClipboard.current = { layers: selectedLayers,
+      groups: editor.design.groups.filter((group) => group.layerIds.every((id) => editor.selectedLayerIds.includes(id))) };
     showNotice({ kind: 'status', message: `Copied ${selectedLayers.length} layer${selectedLayers.length === 1 ? '' : 's'} inside the editor.` });
   };
 
   const pasteSelection = () => {
-    if (layerClipboard.current.length === 0) return;
-    const layers = layerClipboard.current.map((layer): SceneLayer => ({ ...layer,
-      id: crypto.randomUUID(), name: `${layer.name} copy`.slice(0, 80), transform: {
-        ...layer.transform, x: Math.min(0.5, layer.transform.x + 0.035),
-        y: Math.min(0.5, layer.transform.y + 0.035) } }));
-    dispatch({ type: 'insert-layers', layers });
+    const copied = layerClipboard.current;
+    if (copied.layers.length === 0) return;
+    const transforms = new Map(translateSelection(copied.layers, { x: 0.035, y: 0.035 })
+      .map(({ layerId, transform }) => [layerId, transform]));
+    const layers = copied.layers.map((layer): SceneLayer => ({ ...layer,
+      id: crypto.randomUUID(), name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)! }));
+    const groups = copySelectionGroups(copied.groups,
+      new Map(copied.layers.map((layer, index) => [layer.id, layers[index]!.id])),
+      new Map(copied.groups.map((group) => [group.id, crypto.randomUUID()])));
+    dispatch({ type: 'insert-layers', layers, groups });
   };
 
   const duplicateSelection = () => dispatch({ type: 'duplicate-layers',
     layerIds: editor.selectedLayerIds,
-    duplicateIds: editor.selectedLayerIds.map(() => crypto.randomUUID()), offset: 0.035 });
+    duplicateIds: editor.selectedLayerIds.map(() => crypto.randomUUID()),
+    duplicateGroupIds: editor.design.groups
+      .filter((group) => group.layerIds.every((id) => editor.selectedLayerIds.includes(id)))
+      .map(() => crypto.randomUUID()), offset: 0.035 });
 
   const groupSelection = () => {
     if (editor.selectedLayerIds.length < 2) return;
-    const ids = [...editor.selectedLayerIds];
-    setSelectionGroups((current) => [...current.filter((group) => !group.some((id) => ids.includes(id))), ids]);
-    showNotice({ kind: 'status', message: `Grouped ${ids.length} layers for workspace selection.` });
+    const before = services.workspace.getSnapshot().editor;
+    const next = dispatchForEditorSession(session.editorSessionEpoch, { type: 'create-group',
+      groupId: crypto.randomUUID(), name: `Group ${editor.design.groups.length + 1}`,
+      layerIds: editor.selectedLayerIds });
+    if (next && next !== before) {
+      showNotice({ kind: 'status', message: `Grouped ${editor.selectedLayerIds.length} layers. Rename the saved group in Objects.` });
+    }
   };
 
   const ungroupSelection = () => {
-    setSelectionGroups((current) => current.filter((group) => !group.some((id) => editor.selectedLayerIds.includes(id))));
-    showNotice({ kind: 'status', message: 'Selection group removed.' });
+    const groupIds = editor.design.groups.filter((group) =>
+      group.layerIds.some((id) => editor.selectedLayerIds.includes(id))).map((group) => group.id);
+    dispatch({ type: 'remove-groups', groupIds });
   };
 
   const selectAllLayers = () => dispatch({ type: 'select-layers',
@@ -585,6 +597,9 @@ export default function App({ services, experiments }: Props) {
       const key = event.key.toLowerCase();
       if (command && key === 's') { event.preventDefault(); void shortcutActions.current.saveNow(); return; }
       if (editing) return;
+      if (event.key === 'Escape') {
+        event.preventDefault(); dispatch({ type: 'select-layers', layerIds: [] }); setTool('select'); return;
+      }
       if (command && key === 'z') { event.preventDefault(); dispatch({ type: event.shiftKey ? 'redo' : 'undo' }); return; }
       if (command && key === 'a') { event.preventDefault(); shortcutActions.current.selectAllLayers(); return; }
       if (command && key === 'c') { event.preventDefault(); shortcutActions.current.copySelection(); return; }
@@ -596,6 +611,7 @@ export default function App({ services, experiments }: Props) {
         else shortcutActions.current.groupSelection();
         return;
       }
+      if (command || event.altKey) return;
       if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault(); shortcutActions.current.deleteSelectedLayers(); return;
       }
@@ -638,20 +654,15 @@ export default function App({ services, experiments }: Props) {
       changePack: changePackSnapshot,
     },
     layers: {
-      select: (layerId, toggle) => toggle
-        ? dispatch({ type: 'select-layer', layerId, toggle: true })
-        : dispatch({
-            type: 'select-layers',
-            layerIds: expandGroupedSelection([layerId]),
-          }),
-      toggleVisibility: (layerId) => dispatch({ type: 'toggle-layer', layerId }),
-      move: (layerId, direction) => dispatch({ type: 'move-layer', layerId, direction }),
-      remove: (layerId) => dispatch({ type: 'remove-layer', layerId }),
-      rename: (layerId, name) => dispatch({ type: 'rename-layer', layerId, name }),
+      select: (layerId, toggle) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'select-layer', layerId, toggle }),
+      toggleVisibility: (layerId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'toggle-layer', layerId }),
+      move: (layerId, direction) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'move-layer', layerId, direction }),
+      remove: (layerId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'remove-layer', layerId }),
+      rename: (layerId, name) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'rename-layer', layerId, name }),
       duplicate: (layerId) => {
         const layer = editor.design.layers.find((candidate) => candidate.id === layerId);
         if (layer) {
-          dispatch({
+          dispatchForEditorSession(session.editorSessionEpoch, {
             type: 'duplicate-layer',
             layerId,
             duplicateId: crypto.randomUUID(),
@@ -660,10 +671,10 @@ export default function App({ services, experiments }: Props) {
         }
       },
       changeOpacity: (layerId, opacity, historyGroup) =>
-        dispatch({ type: 'set-layer-opacity', layerId, opacity, historyGroup }),
-      commit: () => dispatch({ type: 'commit-history-group' }),
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-layer-opacity', layerId, opacity, historyGroup }),
+      commit: () => dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' }),
       add: addLayer,
-      update: (layer, historyGroup) => dispatch({
+      update: (layer, historyGroup) => dispatchForEditorSession(session.editorSessionEpoch, {
         type: 'update-layer',
         layer,
         ...(historyGroup ? { historyGroup } : {}),
@@ -675,6 +686,14 @@ export default function App({ services, experiments }: Props) {
       duplicateSelection,
       groupSelection,
       ungroupSelection,
+    },
+    groups: {
+      select: (groupId) => {
+        const group = editor.design.groups.find((candidate) => candidate.id === groupId);
+        if (group) dispatchForEditorSession(session.editorSessionEpoch, { type: 'select-layers', layerIds: group.layerIds });
+      },
+      rename: (groupId, name) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'rename-group', groupId, name }),
+      ungroup: (groupId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'remove-groups', groupIds: [groupId] }),
     },
     canvas: {
       changeTool: setTool,
@@ -702,8 +721,8 @@ export default function App({ services, experiments }: Props) {
       changeSelection: (layerIds) =>
         dispatchForEditorSession(session.editorSessionEpoch, {
           type: 'select-layers',
-          layerIds: expandGroupedSelection(layerIds),
-        }),
+          layerIds,
+        })?.selectedLayerIds ?? [],
       addRasterLayer: (layer) =>
         dispatchForEditorSession(session.editorSessionEpoch, { type: 'add-layer', layer }),
       commitTransform: () =>
@@ -713,20 +732,22 @@ export default function App({ services, experiments }: Props) {
     },
     controls: {
       changeProportionsLocked: setProportionsLocked,
-      changeTransform: (transform, historyGroup) => dispatch({
-        type: 'update-transform',
+      changeTransform: (layerId, transform, historyGroup) => dispatchForEditorSession(session.editorSessionEpoch, {
+        type: 'update-layer-transform',
+        layerId,
         transform,
         ...(historyGroup ? { historyGroup } : {}),
       }),
-      changeAppearance: (appearance, historyGroup) => dispatch({
+      changeAppearance: (layerId, appearance, historyGroup) => dispatchForEditorSession(session.editorSessionEpoch, {
         type: 'update-appearance',
+        layerId,
         appearance,
         ...(historyGroup ? { historyGroup } : {}),
       }),
-      applyStyle: (transform, appearance) =>
-        dispatch({ type: 'apply-layer-style', transform, appearance }),
-      commit: () => dispatch({ type: 'commit-history-group' }),
-      reset: () => dispatch({ type: 'reset' }),
+      applyStyle: (layerId, transform, appearance) =>
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'apply-layer-style', layerId, transform, appearance }),
+      commit: () => dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' }),
+      reset: (layerIds) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'reset-layers', layerIds }),
     },
     notices: {
       show: showNotice,
@@ -742,9 +763,8 @@ export default function App({ services, experiments }: Props) {
       notice,
     };
   } else {
-    const pickerEmojiLayer = editor.selectedLayerIds
-      .map((id) => getLayer(editor.design, id))
-      .find((layer) => layer?.kind === 'emoji') ?? getEmojiLayer(editor.design);
+    const selectedLayerId = editor.selectedLayerIds.length === 1 ? editor.selectedLayerIds[0] : undefined;
+    const pickerEmojiLayer = selectedLayerId ? getLayer(editor.design, selectedLayerId) : undefined;
     const attributionPacks = [...new Set(editor.design.layers
       .filter((layer) => layer.kind === 'emoji')
       .map((layer) => layer.source.pack))]
@@ -766,7 +786,7 @@ export default function App({ services, experiments }: Props) {
       canUndo: canUndo(editor),
       canRedo: canRedo(editor),
       packs: packState,
-      pickerEmoji: pickerEmojiLayer.source.grapheme,
+      pickerEmoji: pickerEmojiLayer?.kind === 'emoji' ? pickerEmojiLayer.source.grapheme : '😀',
       attributionPacks,
       proportionsLocked,
       tool,
@@ -776,6 +796,7 @@ export default function App({ services, experiments }: Props) {
       catalog: services.catalog,
       renderer: services.renderer,
       assetDelivery: services.assetDelivery,
+      emojiStyles: services.emojiStyles,
     };
   }
 

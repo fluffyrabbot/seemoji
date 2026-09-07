@@ -1,21 +1,23 @@
 import {
   DEFAULT_DESIGN,
+  DEFAULT_APPEARANCE,
   DEFAULT_TRANSFORM,
   PRIMARY_EMOJI_LAYER_ID,
   getLayer,
   replaceLayer,
-  resetDesign,
-  updateEmojiLayer,
   type Appearance,
   type BrushStroke,
   type DesignDocument,
   type MaskStroke,
   type SceneLayer,
+  type SelectionGroup,
   type StrokeLayer,
   type Transform,
 } from '../domain/design';
 import { DESIGN_CAPACITY, hasDesignCapacity } from '../domain/designCapacity';
 import type { EmojiAssetRef } from '../domain/emoji';
+import { copySelectionGroups, expandGroupSelection, pruneSelectionGroups, selectionGroupError } from '../domain/selectionGroups';
+import { translateSelection } from '../domain/selectionTransforms';
 
 export const EXPORT_SIZES = [48, 128, 256] as const;
 export type ExportSize = (typeof EXPORT_SIZES)[number];
@@ -41,12 +43,12 @@ export type EditorAction =
       readonly layerId: string;
       readonly source: EmojiAssetRef;
     } & GroupedAction)
-  | ({ readonly type: 'update-transform'; readonly transform: Transform } & GroupedAction)
   | ({ readonly type: 'update-layer-transform'; readonly layerId: string; readonly transform: Transform } & GroupedAction)
   | ({ readonly type: 'update-layer-transforms'; readonly updates: readonly { readonly layerId: string; readonly transform: Transform }[] } & GroupedAction)
-  | ({ readonly type: 'update-appearance'; readonly appearance: Appearance } & GroupedAction)
+  | ({ readonly type: 'update-appearance'; readonly layerId: string; readonly appearance: Appearance } & GroupedAction)
   | ({
       readonly type: 'apply-layer-style';
+      readonly layerId: string;
       readonly transform: Transform;
       readonly appearance: Appearance;
     } & GroupedAction)
@@ -59,12 +61,15 @@ export type EditorAction =
   | { readonly type: 'mask-stroke'; readonly layerId: string; readonly stroke: MaskStroke }
   | { readonly type: 'add-stroke-layer'; readonly layerId: string; readonly name: string }
   | { readonly type: 'add-layer'; readonly layer: SceneLayer }
-  | { readonly type: 'insert-layers'; readonly layers: readonly SceneLayer[] }
+  | { readonly type: 'insert-layers'; readonly layers: readonly SceneLayer[]; readonly groups: readonly SelectionGroup[] }
   | ({ readonly type: 'update-layer'; readonly layer: SceneLayer } & GroupedAction)
   | { readonly type: 'rename-layer'; readonly layerId: string; readonly name: string }
   | ({ readonly type: 'set-layer-opacity'; readonly layerId: string; readonly opacity: number } & GroupedAction)
   | { readonly type: 'duplicate-layer'; readonly layerId: string; readonly duplicateId: string; readonly name: string }
-  | { readonly type: 'duplicate-layers'; readonly layerIds: readonly string[]; readonly duplicateIds: readonly string[]; readonly offset?: number }
+  | { readonly type: 'duplicate-layers'; readonly layerIds: readonly string[]; readonly duplicateIds: readonly string[]; readonly duplicateGroupIds: readonly string[]; readonly offset?: number }
+  | { readonly type: 'create-group'; readonly groupId: string; readonly name: string; readonly layerIds: readonly string[] }
+  | { readonly type: 'rename-group'; readonly groupId: string; readonly name: string }
+  | { readonly type: 'remove-groups'; readonly groupIds: readonly string[] }
   | { readonly type: 'select-layer'; readonly layerId: string; readonly toggle?: boolean }
   | { readonly type: 'select-layers'; readonly layerIds: readonly string[] }
   | { readonly type: 'toggle-layer'; readonly layerId: string }
@@ -75,7 +80,7 @@ export type EditorAction =
   | { readonly type: 'undo' }
   | { readonly type: 'redo' }
   | { readonly type: 'set-size'; readonly size: ExportSize }
-  | { readonly type: 'reset' };
+  | { readonly type: 'reset-layers'; readonly layerIds: readonly string[] };
 
 export const INITIAL_EDITOR_STATE: EditorState = {
   design: DEFAULT_DESIGN,
@@ -87,16 +92,18 @@ export const INITIAL_EDITOR_STATE: EditorState = {
 };
 
 const validSelection = (design: DesignDocument, ids: readonly string[]): readonly string[] => {
-  const valid = ids.filter((id, index) => ids.indexOf(id) === index && getLayer(design, id));
-  return valid.length > 0 ? valid : [design.layers.at(-1)!.id];
+  return expandGroupSelection(design, ids);
 };
+
+const reservedId = (design: DesignDocument, id: string): boolean =>
+  !!getLayer(design, id) || design.groups.some((group) => group.id === id);
 
 function recordDesign(
   state: EditorState,
   design: DesignDocument,
   historyGroup?: string,
 ): EditorState {
-  if (design === state.design) return state;
+  if (design === state.design || selectionGroupError(design.groups, design.layers)) return state;
   if (historyGroup && state.historyGroup === historyGroup) {
     return {
       ...state,
@@ -135,9 +142,9 @@ export const canRedo = (state: EditorState): boolean => state.future.length > 0;
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case 'load-design':
-      return hasDesignCapacity(action.design)
+      return hasDesignCapacity(action.design) && !selectionGroupError(action.design.groups, action.design.layers)
         ? { ...state, design: action.design, past: [], future: [], historyGroup: null,
-            selectedLayerIds: [action.design.layers.at(-1)!.id] }
+            selectedLayerIds: validSelection(action.design, [action.design.layers.at(-1)!.id]) }
         : state;
     case 'replace-design':
       return recordCapacityChangingDesign(state, action.design, action.historyGroup);
@@ -151,15 +158,6 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           )
         : state;
     }
-    case 'update-transform':
-      return recordDesign(
-        state,
-        updateEmojiLayer(state.design, (layer) => ({
-          ...layer,
-          transform: action.transform,
-        })),
-        action.historyGroup,
-      );
     case 'update-layer-transform': {
       const layer = getLayer(state.design, action.layerId);
       return layer
@@ -179,25 +177,20 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       });
       return recordDesign(state, { ...state.design, layers }, action.historyGroup);
     }
-    case 'update-appearance':
-      return recordDesign(
-        state,
-        updateEmojiLayer(state.design, (layer) => ({
-          ...layer,
-          appearance: action.appearance,
-        })),
-        action.historyGroup,
-      );
-    case 'apply-layer-style':
-      return recordDesign(
-        state,
-        updateEmojiLayer(state.design, (layer) => ({
-          ...layer,
-          transform: action.transform,
-          appearance: action.appearance,
-        })),
-        action.historyGroup,
-      );
+    case 'update-appearance': {
+      const layer = getLayer(state.design, action.layerId);
+      return layer?.kind === 'emoji'
+        ? recordDesign(state, replaceLayer(state.design, { ...layer, appearance: action.appearance }), action.historyGroup)
+        : state;
+    }
+    case 'apply-layer-style': {
+      const layer = getLayer(state.design, action.layerId);
+      return layer?.kind === 'emoji'
+        ? recordDesign(state, replaceLayer(state.design, {
+            ...layer, transform: action.transform, appearance: action.appearance,
+          }), action.historyGroup)
+        : state;
+    }
     case 'paint-stroke': {
       const existing = getLayer(state.design, action.layerId);
       if (existing?.kind === 'strokes') {
@@ -210,7 +203,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           }),
         );
       }
-      if (existing || !action.createLayerName
+      if (existing || reservedId(state.design, action.layerId) || !action.createLayerName
           || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
       const layer: StrokeLayer = {
         id: action.layerId,
@@ -238,7 +231,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       );
     }
     case 'add-stroke-layer': {
-      if (getLayer(state.design, action.layerId)
+      if (reservedId(state.design, action.layerId)
           || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
       const layer: StrokeLayer = {
         id: action.layerId,
@@ -256,7 +249,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     }
     case 'add-layer': {
-      if (getLayer(state.design, action.layer.id)
+      if (reservedId(state.design, action.layer.id)
           || state.design.layers.length >= DESIGN_CAPACITY.layers) return state;
       const design = { ...state.design, layers: [...state.design.layers, action.layer] };
       if (!hasDesignCapacity(design)) return state;
@@ -268,10 +261,13 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'insert-layers': {
       if (action.layers.length === 0
           || state.design.layers.length + action.layers.length > DESIGN_CAPACITY.layers) return state;
-      const existing = new Set(state.design.layers.map((layer) => layer.id));
-      if (action.layers.some((layer) => !layer.id || existing.has(layer.id))) return state;
-      const design = { ...state.design, layers: [...state.design.layers, ...action.layers] };
-      if (!hasDesignCapacity(design)) return state;
+      const insertedIds = new Set(action.layers.map((layer) => layer.id));
+      if (insertedIds.size !== action.layers.length
+          || action.layers.some((layer) => !layer.id || reservedId(state.design, layer.id))
+          || action.groups.some((group) => group.layerIds.some((id) => !insertedIds.has(id)))) return state;
+      const design = { ...state.design, layers: [...state.design.layers, ...action.layers],
+        groups: [...state.design.groups, ...action.groups] };
+      if (!hasDesignCapacity(design) || selectionGroupError(design.groups, design.layers)) return state;
       return { ...recordDesign(state, design), selectedLayerIds: action.layers.map((layer) => layer.id) };
     }
     case 'update-layer': {
@@ -300,7 +296,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'duplicate-layer': {
       const layer = getLayer(state.design, action.layerId);
-      if (!layer || getLayer(state.design, action.duplicateId)
+      if (!layer || reservedId(state.design, action.duplicateId)
           || state.design.layers.length >= DESIGN_CAPACITY.layers) {
         return state;
       }
@@ -317,32 +313,63 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'duplicate-layers': {
       if (action.layerIds.length !== action.duplicateIds.length
+          || new Set(action.layerIds).size !== action.layerIds.length
+          || new Set(action.duplicateIds).size !== action.duplicateIds.length
           || state.design.layers.length + action.layerIds.length > DESIGN_CAPACITY.layers) return state;
+      const copyingGroups = state.design.groups.filter((group) => group.layerIds.every((id) => action.layerIds.includes(id)));
+      if (copyingGroups.length !== action.duplicateGroupIds.length) return state;
       const offset = action.offset ?? 0.035;
-      const copies = action.layerIds.map((id, index) => {
-        const layer = getLayer(state.design, id);
-        const duplicateId = action.duplicateIds[index];
-        if (!layer || !duplicateId || getLayer(state.design, duplicateId)) return null;
-        return { ...layer, id: duplicateId, name: `${layer.name} copy`.slice(0, 80), transform: {
-          ...layer.transform,
-          x: Math.min(0.5, layer.transform.x + offset),
-          y: Math.min(0.5, layer.transform.y + offset),
-        } } as SceneLayer;
-      });
-      if (copies.some((copy) => copy === null)) return state;
-      const next = copies as SceneLayer[];
-      const design = { ...state.design, layers: [...state.design.layers, ...next] };
-      if (!hasDesignCapacity(design)) return state;
+      if (!Number.isFinite(offset) || action.layerIds.length === 0
+          || action.duplicateIds.some((id) => !id || reservedId(state.design, id))) return state;
+      const idMap = new Map(action.layerIds.map((id, index) => [id, action.duplicateIds[index]!]));
+      const originals = state.design.layers.filter((layer) => idMap.has(layer.id));
+      if (originals.length !== action.layerIds.length) return state;
+      const transforms = new Map(translateSelection(originals, { x: offset, y: offset })
+        .map(({ layerId, transform }) => [layerId, transform]));
+      const next = originals.map((layer) => ({ ...layer, id: idMap.get(layer.id)!,
+        name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)! }));
+      const copiedGroups = copySelectionGroups(copyingGroups,
+        idMap,
+        new Map(copyingGroups.map((group, index) => [group.id, action.duplicateGroupIds[index]!])));
+      const design = { ...state.design, layers: [...state.design.layers, ...next],
+        groups: [...state.design.groups, ...copiedGroups] };
+      if (copiedGroups.length !== copyingGroups.length || !hasDesignCapacity(design)
+          || selectionGroupError(design.groups, design.layers)) return state;
       return { ...recordDesign(state, design),
         selectedLayerIds: next.map((copy) => copy.id) };
     }
+    case 'create-group': {
+      if (reservedId(state.design, action.groupId)) return state;
+      const layerIds = validSelection(state.design, action.layerIds);
+      if (layerIds.length < 2 || state.design.groups.some((group) =>
+        group.layerIds.length === layerIds.length && group.layerIds.every((id) => layerIds.includes(id)))) return state;
+      const group = { id: action.groupId, name: action.name.trim(), layerIds };
+      const groups = [...state.design.groups.filter((existing) =>
+        !existing.layerIds.some((id) => layerIds.includes(id))), group];
+      const design = { ...state.design, groups };
+      if (selectionGroupError(groups, design.layers)) return state;
+      return { ...recordDesign(state, design), selectedLayerIds: layerIds };
+    }
+    case 'rename-group': {
+      const name = action.name.trim();
+      const current = state.design.groups.find((group) => group.id === action.groupId);
+      if (!current || name === current.name) return state;
+      return recordDesign(state, { ...state.design,
+        groups: state.design.groups.map((group) => group.id === action.groupId ? { ...group, name } : group) });
+    }
+    case 'remove-groups': {
+      const groups = state.design.groups.filter((group) => !action.groupIds.includes(group.id));
+      return groups.length === state.design.groups.length ? state
+        : recordDesign(state, { ...state.design, groups });
+    }
     case 'select-layer': {
       if (!getLayer(state.design, action.layerId)) return state;
-      if (!action.toggle) return { ...state, selectedLayerIds: [action.layerId], historyGroup: null };
-      const selected = state.selectedLayerIds.includes(action.layerId)
-        ? state.selectedLayerIds.filter((id) => id !== action.layerId)
-        : [...state.selectedLayerIds, action.layerId];
-      return { ...state, selectedLayerIds: selected.length > 0 ? selected : [action.layerId], historyGroup: null };
+      const unit = validSelection(state.design, [action.layerId]);
+      if (!action.toggle) return { ...state, selectedLayerIds: unit, historyGroup: null };
+      const selected = unit.every((id) => state.selectedLayerIds.includes(id))
+        ? state.selectedLayerIds.filter((id) => !unit.includes(id))
+        : [...state.selectedLayerIds, ...unit];
+      return { ...state, selectedLayerIds: selected, historyGroup: null };
     }
     case 'select-layers':
       return { ...state, selectedLayerIds: validSelection(state.design, action.layerIds), historyGroup: null };
@@ -356,10 +383,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const layer = getLayer(state.design, action.layerId);
       const emojiCount = state.design.layers.filter((candidate) => candidate.kind === 'emoji').length;
       if (!layer || (layer.kind === 'emoji' && emojiCount === 1)) return state;
-      return recordDesign(state, {
-        ...state.design,
-        layers: state.design.layers.filter((candidate) => candidate.id !== layer.id),
-      });
+      const layers = state.design.layers.filter((candidate) => candidate.id !== layer.id);
+      return recordDesign(state, { ...state.design, layers,
+        groups: pruneSelectionGroups(state.design.groups, new Set(layers.map((candidate) => candidate.id))) });
     }
     case 'remove-layers': {
       const ids = new Set(action.layerIds);
@@ -368,7 +394,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       if (ids.size === 0 || emojiIds.length >= emojiCount) return state;
       const layers = state.design.layers.filter((layer) => !ids.has(layer.id));
       return layers.length === state.design.layers.length ? state
-        : recordDesign(state, { ...state.design, layers });
+        : recordDesign(state, { ...state.design, layers,
+            groups: pruneSelectionGroups(state.design.groups, new Set(layers.map((layer) => layer.id))) });
     }
     case 'move-layer': {
       const index = state.design.layers.findIndex((layer) => layer.id === action.layerId);
@@ -409,10 +436,19 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'set-size':
       return { ...state, exportSize: action.size, historyGroup: null };
-    case 'reset': {
-      const reset = resetDesign(state.design);
-      if (JSON.stringify(state.design) === JSON.stringify(reset)) return state;
-      return recordDesign(state, reset);
+    case 'reset-layers': {
+      const targets = new Set(action.layerIds);
+      let changed = false;
+      const layers = state.design.layers.map((layer) => {
+        if (!targets.has(layer.id)) return layer;
+        const reset = layer.kind === 'emoji'
+          ? { ...layer, transform: DEFAULT_TRANSFORM, appearance: DEFAULT_APPEARANCE }
+          : { ...layer, transform: DEFAULT_TRANSFORM };
+        if (JSON.stringify(reset) === JSON.stringify(layer)) return layer;
+        changed = true;
+        return reset;
+      });
+      return changed ? recordDesign(state, { ...state.design, layers }) : state;
     }
   }
 }

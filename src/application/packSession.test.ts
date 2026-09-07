@@ -37,8 +37,11 @@ class WorkspaceStub {
   acceptsEditorMutations = true;
   projectId = 'project-1';
   epoch = 1;
-  design: DesignDocument = DEFAULT_DESIGN;
+  editor = { ...INITIAL_EDITOR_STATE, design: DEFAULT_DESIGN };
   readonly dispatches: EditorAction[] = [];
+
+  get design(): DesignDocument { return this.editor.design; }
+  set design(design: DesignDocument) { this.editor = { ...this.editor, design }; }
 
   getSnapshot() {
     return {
@@ -50,11 +53,121 @@ class WorkspaceStub {
 
   dispatch(action: EditorAction): void {
     this.dispatches.push(action);
-    this.design = editorReducer({ ...INITIAL_EDITOR_STATE, design: this.design }, action).design;
+    this.editor = editorReducer(this.editor, action);
   }
 }
 
 describe('pack session', () => {
+  it('validates an added emoji before inserting it once, selecting it, and recording one undo step', async () => {
+    let release!: () => void;
+    const validation = new Promise<void>((resolve) => { release = resolve; });
+    const workspace = new WorkspaceStub();
+    const validateSource = vi.fn(async () => validation);
+    const session = new PackSession({
+      catalog: catalog(async () => true), preference: preference(), workspace, validateSource,
+    });
+    const pending = session.pick('😄', { kind: 'add', layerId: 'emoji-2' });
+    await vi.waitFor(() => expect(validateSource).toHaveBeenCalledOnce());
+    expect(workspace.design).toBe(DEFAULT_DESIGN);
+    expect(workspace.dispatches).toEqual([]);
+    release();
+    await expect(pending).resolves.toEqual({ kind: 'applied' });
+    expect(workspace.design.layers).toHaveLength(2);
+    expect(workspace.design.layers[0]).toBe(DEFAULT_DESIGN.layers[0]);
+    expect(workspace.design.layers[1]).toMatchObject({ id: 'emoji-2', source: { grapheme: '😄' } });
+    expect(workspace.editor.selectedLayerIds).toEqual(['emoji-2']);
+    expect(workspace.editor.past).toEqual([DEFAULT_DESIGN]);
+    expect(workspace.dispatches).toHaveLength(1);
+    workspace.dispatch({ type: 'undo' });
+    expect(workspace.design).toBe(DEFAULT_DESIGN);
+  });
+
+  it('does not insert a placeholder or history entry when added artwork fails validation', async () => {
+    const workspace = new WorkspaceStub();
+    const session = new PackSession({
+      catalog: catalog(async () => true), preference: preference(), workspace,
+      validateSource: async () => { throw new Error('Artwork unavailable'); },
+    });
+    await expect(session.pick('😄', { kind: 'add', layerId: 'emoji-2' })).resolves.toEqual({
+      kind: 'rejected', error: 'Artwork unavailable',
+    });
+    expect(workspace.design).toBe(DEFAULT_DESIGN);
+    expect(workspace.editor.past).toEqual([]);
+    expect(workspace.dispatches).toEqual([]);
+  });
+
+  it.each(['project', 'session', 'superseded', 'busy'] as const)(
+    'drops a validated add after its %s fence changes', async (fence) => {
+      let release!: () => void;
+      const validation = new Promise<void>((resolve) => { release = resolve; });
+      const workspace = new WorkspaceStub();
+      const validateSource = vi.fn(async () => validation);
+      const session = new PackSession({
+        catalog: catalog(async () => true), preference: preference(), workspace, validateSource,
+      });
+      const pending = session.pick('😄', { kind: 'add', layerId: 'emoji-2' });
+      await vi.waitFor(() => expect(validateSource).toHaveBeenCalledOnce());
+      if (fence === 'project') workspace.projectId = 'project-2';
+      if (fence === 'session') workspace.epoch += 1;
+      if (fence === 'busy') workspace.acceptsEditorMutations = false;
+      if (fence === 'superseded') await session.changeSnapshot({ pack: 'twemoji', packVersion: '16.0.0' }, null);
+      release();
+      await expect(pending).resolves.toEqual({ kind: 'stale' });
+      expect(workspace.design).toBe(DEFAULT_DESIGN);
+      expect(workspace.dispatches).toEqual([]);
+    },
+  );
+
+  it('captures the originating project before initial catalog loading', async () => {
+    let release!: () => void;
+    const loaded = new Promise<void>((resolve) => { release = resolve; });
+    const workspace = new WorkspaceStub();
+    const sourceCatalog: EmojiPackCatalog = {
+      ...catalog(async () => true),
+      list: async () => { await loaded; return { ok: true, value: [SUMMARY] }; },
+    };
+    const session = new PackSession({
+      catalog: sourceCatalog, preference: preference(), workspace, validateSource: async () => undefined,
+    });
+    const pending = session.pick('😄', { kind: 'add', layerId: 'emoji-2' });
+    workspace.projectId = 'project-2';
+    release();
+    await expect(pending).resolves.toEqual({ kind: 'stale' });
+    expect(workspace.dispatches).toEqual([]);
+  });
+
+  it('changes the browsing pack without remapping any artwork', async () => {
+    const workspace = new WorkspaceStub();
+    const store = preference();
+    const hasGlyph = vi.fn(async () => true);
+    const session = new PackSession({
+      catalog: catalog(hasGlyph), preference: store, workspace, validateSource: async () => undefined,
+    });
+    const target: PackSnapshot = { pack: 'twemoji', packVersion: '16.0.0', style: 'flat' };
+    await expect(session.changeSnapshot(target, null)).resolves.toEqual({ kind: 'applied' });
+    expect(session.getSnapshot().selected).toEqual(target);
+    expect(workspace.design).toBe(DEFAULT_DESIGN);
+    expect(workspace.dispatches).toEqual([]);
+    expect(hasGlyph).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(store.write).toHaveBeenCalledWith(target));
+  });
+
+  it('replaces only the explicit second emoji and can undo the replacement', async () => {
+    const workspace = new WorkspaceStub();
+    const original = getEmojiLayer(workspace.design);
+    workspace.design = { ...workspace.design, layers: [original, { ...original, id: 'emoji-2' }] };
+    const before = workspace.design;
+    const session = new PackSession({
+      catalog: catalog(async () => true), preference: preference(), workspace, validateSource: async () => undefined,
+    });
+    await expect(session.pick('😄', { kind: 'replace', layerId: 'emoji-2' })).resolves.toEqual({ kind: 'applied' });
+    expect(workspace.design.layers[0]).toBe(original);
+    expect(workspace.design.layers[1]).toMatchObject({ source: { grapheme: '😄' } });
+    expect(workspace.editor.past).toEqual([before]);
+    workspace.dispatch({ type: 'undo' });
+    expect(workspace.design).toBe(before);
+  });
+
   it('keeps listed versions and normalizes styles within that version', () => {
     expect(resolvePackPreference(
       { pack: 'twemoji', packVersion: '15.1.0', style: 'flat' },
@@ -100,11 +213,11 @@ describe('pack session', () => {
     });
     await session.load();
     const layerId = getEmojiLayer(workspace.design).id;
-    await expect(session.pick('😀', layerId)).resolves.toEqual({ kind: 'applied' });
+    await expect(session.pick('😀', { kind: 'replace', layerId })).resolves.toEqual({ kind: 'applied' });
     expect(getEmojiLayer(workspace.design).source).toMatchObject({
       grapheme: '😀', pack: 'twemoji', packVersion: '15.1.0',
     });
-    await expect(session.pick('A', layerId)).resolves.toEqual({
+    await expect(session.pick('A', { kind: 'replace', layerId })).resolves.toEqual({
       kind: 'rejected',
       error: 'No Twemoji 15.1.0 artwork exists for A',
     });
@@ -184,7 +297,7 @@ describe('pack session', () => {
       validateSource,
     });
     await session.load();
-    const pending = session.pick('😄', getEmojiLayer(workspace.design).id);
+    const pending = session.pick('😄', { kind: 'replace', layerId: getEmojiLayer(workspace.design).id });
     await vi.waitFor(() => expect(validateSource).toHaveBeenCalledOnce());
     workspace.epoch += 1;
     releaseValidation();
@@ -216,7 +329,7 @@ describe('pack session', () => {
 
     const changing = session.changeSnapshot(target, layerId);
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    const picking = session.pick('👍🏻', layerId);
+    const picking = session.pick('👍🏻', { kind: 'replace', layerId });
     await vi.waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]).toMatchObject({
       snapshot: target,

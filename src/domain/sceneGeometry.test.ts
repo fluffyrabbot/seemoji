@@ -83,7 +83,7 @@ describe('scene geometry', () => {
     expect(worldPointToLayerLocal(collapsed, { x: 0.5, y: 0.5 })).toBeNull();
   });
 
-  it("uses the emoji planner's fitted matrix for interaction geometry", () => {
+  it('uses the same explicit matrix for emoji rendering and interaction at large scales', () => {
     const emoji = {
       ...DEFAULT_EMOJI_LAYER,
       transform: { ...DEFAULT_TRANSFORM, x: 0.12, rotate: 47, scaleX: 3, scaleY: 2.4 },
@@ -101,5 +101,15 @@ describe('scene geometry', () => {
     expect(layerLocalPointToWorld(emoji, local).y).toBeCloseTo(expected.y, 12);
     expect(worldPointToLayerLocal(emoji, expected)?.x).toBeCloseTo(local.x, 12);
     expect(worldPointToLayerLocal(emoji, expected)?.y).toBeCloseTo(local.y, 12);
+  });
+
+  it('keeps emoji selection geometry unchanged when its color or edge changes', () => {
+    const emoji = { ...DEFAULT_EMOJI_LAYER,
+      transform: { ...DEFAULT_TRANSFORM, rotate: 47, scaleX: 3, scaleY: 2.4 },
+    };
+    const styled = { ...emoji, appearance: { ...emoji.appearance,
+      blur: 0.08, outline: { width: 0.08, color: '#ffffff' },
+    } };
+    expect(layerWorldBounds(styled)).toEqual(layerWorldBounds(emoji));
   });
 });

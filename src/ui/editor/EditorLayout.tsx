@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import ConflictResolutionPanel from '../ConflictResolutionPanel';
 import Controls from '../Controls';
 import EmojiPicker from '../EmojiPicker';
@@ -23,6 +23,7 @@ interface Props {
 export default function EditorLayout({ model, commands, renderExportBar }: Props) {
   const conflictPanelRef = useRef<HTMLDivElement>(null);
   const licensesDialogRef = useRef<HTMLDialogElement>(null);
+  const [panel, setPanel] = useState<'emoji' | 'layers' | 'adjust'>('emoji');
 
   if (model.status === 'loading') {
     return <main className="editor-layout" aria-busy="true">
@@ -39,13 +40,24 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
   const currentProject = model.projects.find(
     (project) => project.id === model.currentProjectId,
   );
+  const selectedLayer = model.editor.selectedLayerIds.length === 1
+    ? model.editor.design.layers.find((layer) => layer.id === model.editor.selectedLayerIds[0])
+    : null;
+  const addText = () => {
+    commands.layers.add('text');
+    setPanel('adjust');
+  };
+  const chooseEmoji = () => {
+    setPanel('emoji');
+    requestAnimationFrame(() => document.getElementById('emoji-search')?.focus());
+  };
 
   return (
     <>
       <header className="app-header">
         <div>
           <h1>seemoji</h1>
-          <p>Shape, style, and share an emoji anywhere.</p>
+          <p>Pick a mood. Make it yours.</p>
         </div>
         <div className="history-actions" aria-label="Edit history">
           <button disabled={model.workspaceBusy || !model.canUndo}
@@ -112,25 +124,30 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
         onPurgeQuarantined={(record) => void commands.recovery.purgeQuarantined(record)}
       />
 
-      <main className="editor-layout" inert={model.workspaceBusy}
+      <main className="editor-layout" data-panel={panel} inert={model.workspaceBusy}
         aria-busy={model.workspaceBusy}>
-        <div className="editor-panel-tabs" role="radiogroup" aria-label="Editing panels">
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="emoji-tab"
-            defaultChecked />
-          <label htmlFor="emoji-tab">Emoji</label>
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="layers-tab" />
-          <label htmlFor="layers-tab">Layers</label>
-          <input className="panel-tab-input" type="radio" name="editor-panel" id="adjust-tab" />
-          <label htmlFor="adjust-tab">Adjust</label>
+        <div className="editor-panel-tabs" aria-label="Editing panels">
+          {(['emoji', 'layers', 'adjust'] as const).map((candidate) => (
+            <button key={candidate} type="button" aria-pressed={panel === candidate}
+              aria-controls={candidate === 'adjust' ? 'editing-controls' : 'emoji-source'}
+              onClick={() => setPanel(candidate)}>
+              {candidate === 'emoji' ? 'Emoji' : candidate === 'layers' ? 'Objects' : 'Edit'}
+            </button>
+          ))}
         </div>
-        <section className="picker-region" aria-label="Emoji source">
+        <section className="picker-region" id="emoji-source" aria-label="Emoji source">
           <div className="emoji-panel-shell">
             <EmojiPicker
               emoji={model.pickerEmoji}
               catalog={model.catalog}
               snapshot={model.packs.selected}
               packs={model.packs.packs}
-              onPick={commands.emoji.select}
+              selectedLayer={selectedLayer?.kind === 'emoji' ? selectedLayer : null}
+              onPick={async (emoji, target) => {
+                const applied = await commands.emoji.select(emoji, target);
+                if (applied) setPanel('adjust');
+                return applied;
+              }}
               onSnapshotChange={commands.emoji.changePack}
             />
           </div>
@@ -142,12 +159,8 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               onToggle={commands.layers.toggleVisibility}
               onMove={commands.layers.move}
               onRemove={commands.layers.remove}
-              onRename={commands.layers.rename}
               onDuplicate={commands.layers.duplicate}
-              onOpacityChange={commands.layers.changeOpacity}
-              onCommit={commands.layers.commit}
               onAdd={commands.layers.add}
-              onUpdate={commands.layers.update}
               onAlign={commands.layers.align}
               onDistribute={commands.layers.distribute}
               onCopy={commands.layers.copySelection}
@@ -155,7 +168,17 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               onDuplicateSelection={commands.layers.duplicateSelection}
               onGroup={commands.layers.groupSelection}
               onUngroup={commands.layers.ungroupSelection}
+              onSelectGroup={commands.groups.select}
+              onRenameGroup={commands.groups.rename}
+              onUngroupGroup={commands.groups.ungroup}
             />
+          <StarredProjectsBar
+            projects={model.projects}
+            renderer={model.renderer}
+            busy={model.workspaceBusy}
+            onOpen={(id) => void commands.projects.open(id)}
+            onUseAsTemplate={(id) => void commands.projects.useAsTemplate(id)}
+          />
           </div>
         </section>
 
@@ -173,12 +196,18 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             brush={model.brush}
             canvasSettings={model.canvasSettings}
             onToolChange={commands.canvas.changeTool}
+            onAddText={addText}
+            onChooseEmoji={chooseEmoji}
             onBrushChange={commands.canvas.changeBrush}
             onCanvasSettingsChange={commands.canvas.changeSettings}
             onPaintStroke={commands.canvas.paintStroke}
             onMaskStroke={commands.canvas.maskStroke}
             onTransformsChange={commands.canvas.changeTransforms}
-            onSelectionChange={commands.canvas.changeSelection}
+            onSelectionChange={(ids) => {
+              const selected = commands.canvas.changeSelection(ids);
+              if (ids.length > 0) setPanel('adjust');
+              return selected;
+            }}
             onRasterLayer={commands.canvas.addRasterLayer}
             onTransformCommit={commands.canvas.commitTransform}
             onSizeChange={commands.canvas.changeSize}
@@ -195,23 +224,22 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               />
             </div>
           )}
-          <StarredProjectsBar
-            projects={model.projects}
-            renderer={model.renderer}
-            busy={model.workspaceBusy}
-            onOpen={(id) => void commands.projects.open(id)}
-            onUseAsTemplate={(id) => void commands.projects.useAsTemplate(id)}
-          />
+
         </section>
 
-        <section className="controls-region" aria-label="Editing controls">
+        <section className="controls-region" id="editing-controls" aria-label="Editing controls">
           <Controls
+            key={model.editorSessionEpoch}
             design={model.editor.design}
+            selectedLayerIds={model.editor.selectedLayerIds}
+            renderer={model.renderer}
+            emojiStyles={model.emojiStyles}
             proportionsLocked={model.proportionsLocked}
             onProportionsLockedChange={commands.controls.changeProportionsLocked}
-            onTransformChange={commands.controls.changeTransform}
+            onTransformsChange={commands.canvas.changeTransforms}
             onAppearanceChange={commands.controls.changeAppearance}
             onApplyStyle={commands.controls.applyStyle}
+            onUpdateLayer={commands.layers.update}
             onCommit={commands.controls.commit}
             onReset={commands.controls.reset}
           />

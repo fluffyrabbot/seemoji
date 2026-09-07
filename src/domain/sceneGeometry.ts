@@ -1,6 +1,6 @@
 import type { LayerBounds, SceneLayer } from './design';
 import {
-  createEmojiRenderPlan,
+  BASE_GLYPH_RATIO,
   createLayerMatrix,
   toTopLeftOrigin,
   type AffineMatrix,
@@ -16,11 +16,13 @@ export interface WorldBounds {
 export interface WorldPoint { readonly x: number; readonly y: number }
 
 const DEFAULT_BOUNDS: LayerBounds = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
-const EMOJI_GEOMETRY_PLAN_SIZE = 1024;
 
 export function layerLocalBounds(layer: SceneLayer): LayerBounds {
   if (layer.kind === 'shape' || layer.kind === 'text') return layer.bounds;
-  if (layer.kind === 'emoji') return { x: 0.14, y: 0.14, width: 0.72, height: 0.72 };
+  if (layer.kind === 'emoji') return {
+    x: (1 - BASE_GLYPH_RATIO) / 2, y: (1 - BASE_GLYPH_RATIO) / 2,
+    width: BASE_GLYPH_RATIO, height: BASE_GLYPH_RATIO,
+  };
   if (layer.kind === 'raster') {
     if (layer.runs.length === 0) return DEFAULT_BOUNDS;
     let left = layer.resolution;
@@ -90,18 +92,7 @@ export function invertMatrix(matrix: AffineMatrix): AffineMatrix | null {
 
 /** Maps normalized layer-local points directly into normalized canvas/world points. */
 export function layerLocalToWorldMatrix(layer: SceneLayer): AffineMatrix {
-  let centered: AffineMatrix;
-  if (layer.kind === 'emoji') {
-    const matrix = createEmojiRenderPlan(layer, EMOJI_GEOMETRY_PLAN_SIZE).matrix;
-    centered = {
-      ...matrix,
-      e: matrix.e / EMOJI_GEOMETRY_PLAN_SIZE,
-      f: matrix.f / EMOJI_GEOMETRY_PLAN_SIZE,
-    };
-  } else {
-    centered = createLayerMatrix(layer.transform, 1);
-  }
-  return toTopLeftOrigin(centered, 1);
+  return toTopLeftOrigin(createLayerMatrix(layer.transform, 1), 1);
 }
 
 export function layerLocalPointToWorld(layer: SceneLayer, point: WorldPoint): WorldPoint {

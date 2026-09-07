@@ -33,7 +33,7 @@ export default function WorkspaceMenu({ starred, storageHealth, busy, onSaveNow,
       <div className="workspace-menu-popover" aria-label="Project and workspace actions">
         <strong>Project</strong>
         <button type="button" disabled={busy} onClick={() => run(onToggleStar)}>
-          {starred ? '★ Remove from templates' : '☆ Add to templates'}
+          {starred ? '★ Remove favorite' : '☆ Add favorite'}
         </button>
         <button type="button" disabled={busy} onClick={() => run(onSaveNow)}>
           <span>Save now</span><kbd>⌘S</kbd>

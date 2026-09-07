@@ -1,4 +1,4 @@
-import type { DesignDocument, SceneLayer } from '../domain/design';
+import type { DesignDocument } from '../domain/design';
 
 interface Props {
   readonly design: DesignDocument;
@@ -7,12 +7,8 @@ interface Props {
   readonly onToggle: (id: string) => void;
   readonly onMove: (id: string, direction: 'forward' | 'backward') => void;
   readonly onRemove: (id: string) => void;
-  readonly onRename: (id: string, name: string) => void;
   readonly onDuplicate: (id: string) => void;
-  readonly onOpacityChange: (id: string, opacity: number, historyGroup: string) => void;
-  readonly onCommit: () => void;
   readonly onAdd: (kind: 'paint' | 'rectangle' | 'ellipse' | 'line' | 'text') => void;
-  readonly onUpdate: (layer: SceneLayer, historyGroup?: string) => void;
   readonly onAlign: (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
   readonly onDistribute: (axis: 'horizontal' | 'vertical') => void;
   readonly onCopy: () => void;
@@ -20,6 +16,9 @@ interface Props {
   readonly onDuplicateSelection: () => void;
   readonly onGroup: () => void;
   readonly onUngroup: () => void;
+  readonly onSelectGroup: (groupId: string) => void;
+  readonly onRenameGroup: (groupId: string, name: string) => void;
+  readonly onUngroupGroup: (groupId: string) => void;
 }
 
 export default function LayersPanel({
@@ -29,12 +28,8 @@ export default function LayersPanel({
   onToggle,
   onMove,
   onRemove,
-  onRename,
   onDuplicate,
-  onOpacityChange,
-  onCommit,
   onAdd,
-  onUpdate,
   onAlign,
   onDistribute,
   onCopy,
@@ -42,9 +37,15 @@ export default function LayersPanel({
   onDuplicateSelection,
   onGroup,
   onUngroup,
+  onSelectGroup,
+  onRenameGroup,
+  onUngroupGroup,
 }: Props) {
   const topFirst = [...design.layers].reverse();
   const emojiCount = design.layers.filter((layer) => layer.kind === 'emoji').length;
+  const selectedGroups = design.groups.filter((group) => group.layerIds.some((id) => selectedLayerIds.includes(id)));
+  const alreadyGrouped = selectedGroups.length === 1
+    && selectedGroups[0]!.layerIds.length === selectedLayerIds.length;
 
   return (
     <div className="panel layers-panel">
@@ -77,15 +78,41 @@ export default function LayersPanel({
         </div>
       )}
       <div className="selection-actions" aria-label="Selection actions">
-        <button type="button" onClick={onCopy} title="Copy layers (⌘C)">Copy</button>
-        <button type="button" onClick={onPaste} title="Paste layers (⌘V)">Paste</button>
-        <button type="button" onClick={onDuplicateSelection} title="Duplicate with offset (⌘D)">Duplicate</button>
-        <button type="button" disabled={selectedLayerIds.length < 2} onClick={onGroup} title="Group selection (⌘G)">Group</button>
-        <button type="button" onClick={onUngroup} title="Ungroup selection (⇧⌘G)">Ungroup</button>
+        <button type="button" disabled={selectedLayerIds.length === 0} onClick={onCopy} title="Copy layers (⌘C)">Copy layers</button>
+        <button type="button" onClick={onPaste} title="Paste layers (⌘V)">Paste layers</button>
+        <button type="button" disabled={selectedLayerIds.length === 0} onClick={onDuplicateSelection}
+          aria-label="Duplicate selection" title="Duplicate with offset (⌘D)">Duplicate</button>
+        <button type="button" disabled={selectedLayerIds.length < 2 || alreadyGrouped} onClick={onGroup} title="Group selection (⌘G)">Group</button>
+        <button type="button" disabled={selectedGroups.length === 0} onClick={onUngroup} title="Ungroup selection (⇧⌘G)">Ungroup</button>
       </div>
+      {design.groups.length > 0 && <section className="selection-groups" aria-label="Saved groups">
+        <h3>Saved groups</h3>
+        <p>Select a group to edit its members together.</p>
+        {design.groups.map((group) => <div className="selection-group" key={`${group.id}:${group.name}`}>
+          <button type="button" aria-label={`Select group “${group.name}”`}
+            aria-pressed={group.layerIds.every((id) => selectedLayerIds.includes(id))}
+            onClick={() => onSelectGroup(group.id)}>{group.layerIds.length} objects</button>
+          <input aria-label={`Rename group “${group.name}”`} defaultValue={group.name} maxLength={80}
+            onBlur={(event) => {
+              const name = event.currentTarget.value.trim();
+              if (name) onRenameGroup(group.id, name);
+              else event.currentTarget.value = group.name;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+              if (event.key === 'Escape') {
+                event.currentTarget.value = group.name;
+                event.currentTarget.blur();
+              }
+            }} />
+          <button type="button" aria-label={`Ungroup “${group.name}”`}
+            onClick={() => onUngroupGroup(group.id)}>Ungroup</button>
+        </div>)}
+      </section>}
       <div className="layer-list" role="list" aria-label="Canvas layers">
         {topFirst.map((layer) => {
           const index = design.layers.findIndex((candidate) => candidate.id === layer.id);
+          const group = design.groups.find((candidate) => candidate.layerIds.includes(layer.id));
           return (
             <div className={`layer-item ${selectedLayerIds.includes(layer.id) ? 'selected' : ''}`}
               key={layer.id} role="listitem">
@@ -112,6 +139,7 @@ export default function LayersPanel({
                         : layer.kind === 'shape' ? layer.shape
                           : layer.kind === 'text' ? 'Text' : `${layer.runs.length} fill runs`}
                     {layer.mask.length > 0 ? ` · ${layer.mask.length} mask` : ''}
+                    {group ? ` · ${group.name}` : ''}
                   </small>
                 </span>
               </button>
@@ -129,56 +157,7 @@ export default function LayersPanel({
                 <button type="button" aria-label={`Duplicate “${layer.name}”`}
                   title="Duplicate layer" onClick={() => onDuplicate(layer.id)}>⧉</button>
               </div>
-              {selectedLayerIds.length === 1 && selectedLayerIds[0] === layer.id && (
-                <div className="layer-properties">
-                  <label>
-                    <span>Name</span>
-                    <input key={layer.name} type="text" defaultValue={layer.name} maxLength={80}
-                      onBlur={(event) => onRename(layer.id, event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') event.currentTarget.blur();
-                      }} />
-                  </label>
-                  {layer.kind === 'text' && (
-                    <>
-                      <label>
-                        <span>Text</span>
-                        <input type="text" maxLength={500} value={layer.text}
-                          onChange={(event) => onUpdate({ ...layer, text: event.target.value || ' ' }, `text:${layer.id}`)}
-                          onBlur={onCommit} />
-                      </label>
-                      <label>
-                        <span>Color</span>
-                        <input type="color" value={layer.color}
-                          onChange={(event) => onUpdate({ ...layer, color: event.target.value }, `text-color:${layer.id}`)}
-                          onPointerUp={onCommit} />
-                      </label>
-                    </>
-                  )}
-                  {layer.kind === 'shape' && (
-                    <label>
-                      <span>Color</span>
-                      <input type="color" value={layer.fill ?? layer.stroke?.color ?? '#000000'}
-                        onChange={(event) => onUpdate(layer.shape === 'line'
-                          ? { ...layer, stroke: { color: event.target.value, width: layer.stroke?.width ?? 0.025 } }
-                          : { ...layer, fill: event.target.value }, `shape-color:${layer.id}`)}
-                        onPointerUp={onCommit} />
-                    </label>
-                  )}
-                  <label>
-                    <span>Opacity</span>
-                    <input type="range" aria-label="Layer opacity"
-                      min="0" max="1" step="0.05" value={layer.opacity}
-                      onChange={(event) => onOpacityChange(
-                        layer.id,
-                        Number(event.target.value),
-                        `layer-opacity:${layer.id}`,
-                      )}
-                      onPointerUp={onCommit} onKeyUp={onCommit} />
-                    <output>{Math.round(layer.opacity * 100)}%</output>
-                  </label>
-                </div>
-              )}
+
             </div>
           );
         })}

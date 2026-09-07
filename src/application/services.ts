@@ -6,6 +6,7 @@ import type { EmojiPackCatalog } from '../ports/emojiPackCatalog';
 import type { PackPreferenceStore } from '../ports/packPreference';
 import type { PackSession } from './packSession';
 import type { AssetDeliveryService } from './assetDelivery';
+import type { EmojiStyleLibrary } from './emojiStyleLibrary';
 
 export type { StorageHealth } from '../ports/storageHealth';
 
@@ -19,4 +20,5 @@ export interface AppServices {
   readonly packPreference: PackPreferenceStore;
   readonly packs: PackSession;
   readonly assetDelivery: AssetDeliveryService;
+  readonly emojiStyles: () => Promise<EmojiStyleLibrary>;
 }

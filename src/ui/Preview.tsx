@@ -10,9 +10,10 @@ import type { ExportSize } from '../application/editor';
 import type { AssetDeliveryService } from '../application/assetDelivery';
 import type { RenderCoordinator } from '../application/renderCoordinator';
 import {
+  DEFAULT_APPEARANCE,
+  DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   getEmojiLayer,
-  resetDesign,
   type BrushStroke,
   type DesignDocument,
   type MaskStroke,
@@ -22,6 +23,8 @@ import {
   type Transform,
 } from '../domain/design';
 import { createFloodFillRuns } from '../domain/floodFill';
+import { expandGroupSelection } from '../domain/selectionGroups';
+import { rotateSelection, scaleLayerAxes, scaleSelectionBy, selectionPivot, translateSelection, wrapRotation } from '../domain/selectionTransforms';
 import {
   boundsIntersect,
   hitTestLayers,
@@ -62,12 +65,14 @@ interface Props {
   readonly brush: BrushSettings;
   readonly canvasSettings: CanvasSettings;
   readonly onToolChange: (tool: EditorTool) => void;
+  readonly onAddText: () => void;
+  readonly onChooseEmoji: () => void;
   readonly onBrushChange: (brush: BrushSettings) => void;
   readonly onCanvasSettingsChange: (settings: CanvasSettings) => void;
   readonly onPaintStroke: (layerId: string, stroke: BrushStroke, createLayerName?: string) => void;
   readonly onMaskStroke: (layerId: string, stroke: MaskStroke) => void;
   readonly onTransformsChange: (updates: readonly { readonly layerId: string; readonly transform: Transform }[], historyGroup?: string) => void;
-  readonly onSelectionChange: (layerIds: readonly string[]) => void;
+  readonly onSelectionChange: (layerIds: readonly string[]) => readonly string[];
   readonly onRasterLayer: (layer: RasterLayer) => void;
   readonly onTransformCommit: () => void;
   readonly onSizeChange: (size: ExportSize) => void;
@@ -82,23 +87,25 @@ type Gesture =
       readonly kind: 'move';
       readonly pointerId: number;
       readonly start: Point;
-      readonly transforms: readonly { readonly layerId: string; readonly transform: Transform }[];
+      readonly layers: readonly SceneLayer[];
       readonly bounds: WorldBounds;
     }
   | {
       readonly kind: 'scale';
       readonly pointerId: number;
       readonly center: Point;
-      readonly startLocal: Point;
+      readonly startLocal: Point | null;
+      readonly uniform: boolean;
       readonly startDistance: number;
-      readonly transforms: readonly { readonly layerId: string; readonly transform: Transform }[];
+      readonly layers: readonly SceneLayer[];
     }
   | {
       readonly kind: 'rotate';
       readonly pointerId: number;
       readonly center: Point;
-      readonly startAngle: number;
-      readonly transforms: readonly { readonly layerId: string; readonly transform: Transform }[];
+      readonly lastAngle: number;
+      readonly angleDelta: number;
+      readonly layers: readonly SceneLayer[];
     };
 
 interface Marquee {
@@ -128,21 +135,6 @@ interface HoverSample {
 const clamp = (value: number, [minimum, maximum]: readonly [number, number]) =>
   Math.min(maximum, Math.max(minimum, value));
 
-const pointInLayerSpace = (point: Point, center: Point, rotate: number): Point => {
-  const radians = (-rotate * Math.PI) / 180;
-  const x = point.x - center.x;
-  const y = point.y - center.y;
-  return {
-    x: x * Math.cos(radians) - y * Math.sin(radians),
-    y: x * Math.sin(radians) + y * Math.cos(radians),
-  };
-};
-
-const wrappedDegrees = (value: number): number => {
-  const wrapped = ((value + 180) % 360 + 360) % 360 - 180;
-  return clamp(wrapped, DESIGN_LIMITS.rotate);
-};
-
 const svgLayerTransform = (layer: SceneLayer, size: number): string => {
   const { a, b, c, d, e, f } = layerLocalToWorldMatrix(layer);
   return `matrix(${a} ${b} ${c} ${d} ${e * size} ${f * size})`;
@@ -160,6 +152,8 @@ export default function Preview({
   brush,
   canvasSettings,
   onToolChange,
+  onAddText,
+  onChooseEmoji,
   onBrushChange,
   onCanvasSettingsChange,
   onPaintStroke,
@@ -183,6 +177,10 @@ export default function Preview({
   const [snapGuides, setSnapGuides] = useState<{ readonly x?: number; readonly y?: number }>({});
   const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const lightPreviewRef = useRef<HTMLCanvasElement>(null);
+  const darkPreviewRef = useRef<HTMLCanvasElement>(null);
+  const suppressFill = useRef(false);
   const {
     viewport,
     previewRenderSize,
@@ -194,10 +192,21 @@ export default function Preview({
     fit,
     zoomWithWheel,
     worldTransform,
+    spacePressed,
+    beginTouch,
+    continueTouch,
+    endTouch,
   } = useCanvasViewport(stageRef);
   const previewDesign = useMemo(
-    () => (showOriginal ? resetDesign(design) : design),
-    [design, showOriginal],
+    () => showOriginal ? {
+      ...design,
+      layers: design.layers.map((candidate) => !selectedLayerIds.includes(candidate.id) ? candidate : {
+        ...candidate,
+        transform: DEFAULT_TRANSFORM,
+        ...(candidate.kind === 'emoji' ? { appearance: DEFAULT_APPEARANCE } : {}),
+      }),
+    } : design,
+    [design, showOriginal, selectedLayerIds],
   );
   const renderKey = `${size}:${JSON.stringify(design)}`;
   const previewKey = `${previewRenderSize}:${JSON.stringify(previewDesign)}`;
@@ -214,10 +223,10 @@ export default function Preview({
     && candidate.visible
     && packs.find((pack) => pack.id === candidate.source.pack)?.license.shareAlike === true);
   const selectedLayers = design.layers.filter((candidate) => selectedLayerIds.includes(candidate.id));
-  const selectedLayer = selectedLayers[0] ?? layer;
+  const selectedLayer = selectedLayers.length === 1 ? selectedLayers[0] : undefined;
   const drawingLayer = tool === 'eraser' || tool === 'restore'
     ? selectedLayer
-    : tool === 'brush' && selectedLayer.kind === 'strokes'
+    : tool === 'brush' && selectedLayer?.kind === 'strokes'
       ? selectedLayer
       : null;
   const draftLayer = draft?.layerLocal
@@ -226,8 +235,8 @@ export default function Preview({
   const hoverLayer = hoverSample?.layerId
     ? design.layers.find((candidate) => candidate.id === hoverSample.layerId) ?? null
     : null;
-  const selectionBounds = unionWorldBounds(selectedLayers) ?? layerWorldBounds(selectedLayer);
-  const worldCorners = selectedLayers.length === 1 ? layerWorldCorners(selectedLayer) : [
+  const selectionBounds = unionWorldBounds(selectedLayers) ?? { left: 0, right: 0, top: 0, bottom: 0 };
+  const worldCorners = selectedLayer ? layerWorldCorners(selectedLayer) : [
     { x: selectionBounds.left, y: selectionBounds.top },
     { x: selectionBounds.right, y: selectionBounds.top },
     { x: selectionBounds.right, y: selectionBounds.bottom },
@@ -258,6 +267,13 @@ export default function Preview({
         if (!canvasContext) throw new Error('Canvas 2D rendering is unavailable');
         canvasContext.clearRect(0, 0, previewRenderSize, previewRenderSize);
         canvasContext.drawImage(frame.canvas, 0, 0);
+        for (const preview of [lightPreviewRef.current, darkPreviewRef.current]) {
+          const context = preview?.getContext('2d');
+          if (context) {
+            context.clearRect(0, 0, 32, 32);
+            context.drawImage(frame.canvas, 0, 0, 32, 32);
+          }
+        }
         setPaintedPreviewKey(previewKey);
         if (frame.warnings.length > 0) {
           onNotice({ kind: 'error', message: frame.warnings.join(' ') });
@@ -296,9 +312,56 @@ export default function Preview({
     };
   };
 
+  const startTouchNavigation = (event: PointerEvent): boolean => {
+    if (!beginTouch(event)) return false;
+    draftRef.current = null;
+    marqueeRef.current = null;
+    gesture.current = null;
+    setDraft(null);
+    setMarquee(null);
+    setSnapGuides({});
+    onTransformCommit();
+    return true;
+  };
+
+  const commitFill = (event: PointerEvent) => {
+    if (paintedPreviewKey !== previewKey) {
+      onNotice({
+        kind: 'status',
+        message: 'Wait for the current preview to finish rendering before filling.',
+      });
+      return;
+    }
+    const point = pointInCanvas(event);
+    const source = canvasRef.current;
+    if (!point || !source) return;
+    try {
+      const resolution = 128;
+      const sample = document.createElement('canvas');
+      sample.width = resolution;
+      sample.height = resolution;
+      const sampleContext = sample.getContext('2d', { willReadFrequently: true });
+      if (!sampleContext) throw new Error('Canvas pixel access is unavailable');
+      sampleContext.drawImage(source, 0, 0, resolution, resolution);
+      const pixels = sampleContext.getImageData(0, 0, resolution, resolution).data;
+      const runs = createFloodFillRuns({ pixels, width: resolution, height: resolution,
+        seedX: point.x * resolution, seedY: point.y * resolution,
+        tolerance: brush.fillTolerance, color: brush.color });
+      if (runs.length === 0) throw new Error('The selected region is too large to fill safely');
+      onRasterLayer({ id: crypto.randomUUID(), kind: 'raster', name: 'Fill', visible: true,
+        opacity: 1, transform: { x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1,
+          skewX: 0, skewY: 0, flipH: false, flipV: false }, mask: [], resolution, runs });
+      onToolChange('select');
+    } catch (cause) {
+      onNotice({ kind: 'error', message: `Fill failed: ${String(cause)}` });
+    }
+    return;
+  };
+
   const beginPaint = (event: PointerEvent<HTMLDivElement>) => {
     if (!stageRef.current) return;
-    if (tool === 'pan' || event.button === 1) {
+    if (startTouchNavigation(event)) return;
+    if (tool === 'pan' || event.button === 1 || spacePressed.current) {
       beginPan(event);
       return;
     }
@@ -308,61 +371,47 @@ export default function Preview({
       if (!point || !stageRef.current) return;
       const hit = hitTestLayers(design.layers, point);
       if (hit) {
+        const unit = expandGroupSelection(design, [hit.id]);
         const next = event.shiftKey
-          ? selectedLayerIds.includes(hit.id)
-            ? selectedLayerIds.filter((id) => id !== hit.id)
-            : [...selectedLayerIds, hit.id]
-          : [hit.id];
-        onSelectionChange(next.length > 0 ? next : [hit.id]);
+          ? unit.every((id) => selectedLayerIds.includes(id))
+            ? selectedLayerIds.filter((id) => !unit.includes(id))
+            : [...selectedLayerIds, ...unit]
+          : selectedLayerIds.includes(hit.id) ? selectedLayerIds : [hit.id];
+        const selected = onSelectionChange(next);
+        if (!event.shiftKey && selected.length > 0) {
+          event.preventDefault();
+          stageRef.current.focus({ preventScroll: true });
+          stageRef.current.setPointerCapture(event.pointerId);
+          const moving = design.layers.filter((candidate) => selected.includes(candidate.id));
+          gesture.current = {
+            kind: 'move', pointerId: event.pointerId, start: point,
+            layers: moving,
+            bounds: unionWorldBounds(moving)!,
+          };
+        }
         return;
       }
       event.preventDefault();
       stageRef.current.setPointerCapture(event.pointerId);
+      stageRef.current.focus({ preventScroll: true });
+      if (!event.shiftKey) onSelectionChange([]);
       const next = { pointerId: event.pointerId, start: point, current: point, additive: event.shiftKey };
       marqueeRef.current = next;
       setMarquee(next);
       return;
     }
-    if (tool === 'fill') {
-      if (paintedPreviewKey !== previewKey) {
-        onNotice({
-          kind: 'status',
-          message: 'Wait for the current preview to finish rendering before filling.',
-        });
-        return;
-      }
-      const point = pointInCanvas(event);
-      const source = canvasRef.current;
-      if (!point || !source) return;
-      try {
-        const resolution = 128;
-        const sample = document.createElement('canvas');
-        sample.width = resolution;
-        sample.height = resolution;
-        const sampleContext = sample.getContext('2d', { willReadFrequently: true });
-        if (!sampleContext) throw new Error('Canvas pixel access is unavailable');
-        sampleContext.drawImage(source, 0, 0, resolution, resolution);
-        const pixels = sampleContext.getImageData(0, 0, resolution, resolution).data;
-        const runs = createFloodFillRuns({ pixels, width: resolution, height: resolution,
-          seedX: point.x * resolution, seedY: point.y * resolution,
-          tolerance: brush.fillTolerance, color: brush.color });
-        if (runs.length === 0) throw new Error('The selected region is too large to fill safely');
-        onRasterLayer({ id: crypto.randomUUID(), kind: 'raster', name: 'Fill', visible: true,
-          opacity: 1, transform: { x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1,
-            skewX: 0, skewY: 0, flipH: false, flipV: false }, mask: [], resolution, runs });
-        onToolChange('select');
-      } catch (cause) {
-        onNotice({ kind: 'error', message: `Fill failed: ${String(cause)}` });
-      }
+    if (tool === 'fill') return;
+    if (tool !== 'brush' && !selectedLayer) {
+      onNotice({ kind: 'status', message: 'Select one object to erase or restore.' });
       return;
     }
-    const targetIsStrokeLayer = selectedLayer.kind === 'strokes';
+    const targetIsStrokeLayer = selectedLayer?.kind === 'strokes';
     const targetLayerId = tool === 'brush' && !targetIsStrokeLayer
       ? crypto.randomUUID()
-      : selectedLayer.id;
+      : selectedLayer!.id;
     const coordinateLayer = tool === 'brush'
-      ? targetIsStrokeLayer ? selectedLayer : null
-      : selectedLayer;
+      ? targetIsStrokeLayer ? selectedLayer! : null
+      : selectedLayer!;
     const point = strokePointInStage(event, coordinateLayer);
     if (!point) return;
     event.preventDefault();
@@ -383,8 +432,17 @@ export default function Preview({
   };
 
   const beginGesture = (kind: Gesture['kind'], event: PointerEvent) => {
+    if (startTouchNavigation(event)) {
+      event.stopPropagation();
+      return;
+    }
+    if (spacePressed.current || event.button === 1) {
+      event.stopPropagation();
+      beginPan(event);
+      return;
+    }
     const point = pointInCanvas(event);
-    if (!point || !stageRef.current) return;
+    if (!point || !stageRef.current || selectedLayers.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
     stageRef.current.setPointerCapture(event.pointerId);
@@ -393,23 +451,22 @@ export default function Preview({
         kind,
         pointerId: event.pointerId,
         start: point,
-        transforms: selectedLayers.map((candidate) => ({ layerId: candidate.id, transform: candidate.transform })),
+        layers: selectedLayers,
         bounds: selectionBounds,
       };
       return;
     }
-    const gestureCenter = {
-      x: (selectionBounds.left + selectionBounds.right) / 2,
-      y: (selectionBounds.top + selectionBounds.bottom) / 2,
-    };
+    const pivot = selectionPivot(selectedLayers);
+    const gestureCenter = { x: pivot.x + 0.5, y: pivot.y + 0.5 };
     if (kind === 'scale') {
       gesture.current = {
         kind,
         pointerId: event.pointerId,
         center: gestureCenter,
-        startLocal: pointInLayerSpace(point, gestureCenter, selectedLayers.length === 1 ? selectedLayer.transform.rotate : 0),
+        startLocal: selectedLayer ? worldPointToLayerLocal(selectedLayer, point) : null,
+        uniform: proportionsLocked || selectedLayers.length > 1,
         startDistance: Math.hypot(point.x - gestureCenter.x, point.y - gestureCenter.y),
-        transforms: selectedLayers.map((candidate) => ({ layerId: candidate.id, transform: candidate.transform })),
+        layers: selectedLayers,
       };
       return;
     }
@@ -417,12 +474,14 @@ export default function Preview({
       kind,
       pointerId: event.pointerId,
       center: gestureCenter,
-      startAngle: Math.atan2(point.y - gestureCenter.y, point.x - gestureCenter.x),
-      transforms: selectedLayers.map((candidate) => ({ layerId: candidate.id, transform: candidate.transform })),
+      lastAngle: Math.atan2(point.y - gestureCenter.y, point.x - gestureCenter.x),
+      angleDelta: 0,
+      layers: selectedLayers,
     };
   };
 
   const continueGesture = (event: PointerEvent) => {
+    if (continueTouch(event)) return;
     const worldPoint = pointInCanvas(event);
     if (tool === 'brush' || tool === 'eraser' || tool === 'restore') {
       const localPoint = worldPoint && drawingLayer
@@ -488,44 +547,39 @@ export default function Preview({
       if (bestX) dx += bestX.delta;
       if (bestY) dy += bestY.delta;
       setSnapGuides({ ...(bestX ? { x: bestX.guide } : {}), ...(bestY ? { y: bestY.guide } : {}) });
-      onTransformsChange(active.transforms.map(({ layerId, transform }) => ({ layerId, transform: {
-        ...transform,
-        x: clamp(transform.x + dx, DESIGN_LIMITS.x),
-        y: clamp(transform.y + dy, DESIGN_LIMITS.y),
-      } })), 'canvas:move');
+      onTransformsChange(translateSelection(active.layers, { x: dx, y: dy }), 'canvas:move');
       return;
     }
     if (active.kind === 'rotate') {
       const angle = Math.atan2(point.y - active.center.y, point.x - active.center.x);
-      const radians = angle - active.startAngle;
-      onTransformsChange(active.transforms.map(({ layerId, transform }) => {
-        const x = 0.5 + transform.x - active.center.x;
-        const y = 0.5 + transform.y - active.center.y;
-        return { layerId, transform: { ...transform,
-          x: clamp(active.center.x + x * Math.cos(radians) - y * Math.sin(radians) - 0.5, DESIGN_LIMITS.x),
-          y: clamp(active.center.y + x * Math.sin(radians) + y * Math.cos(radians) - 0.5, DESIGN_LIMITS.y),
-          rotate: wrappedDegrees(transform.rotate + (radians * 180) / Math.PI) } };
-      }), 'canvas:rotate');
+      // Unwrap successive pointer angles, so crossing atan2's ±π seam remains a
+      // short continuous motion and complete turns retain their path constraints.
+      const step = wrapRotation((angle - active.lastAngle) * 180 / Math.PI);
+      const angleDelta = active.angleDelta + step;
+      gesture.current = { ...active, lastAngle: angle, angleDelta };
+      onTransformsChange(rotateSelection(active.layers, angleDelta), 'canvas:rotate');
       return;
     }
-    const local = pointInLayerSpace(point, active.center,
-      selectedLayers.length === 1 ? selectedLayer.transform.rotate : 0);
-    const uniform = Math.hypot(point.x - active.center.x, point.y - active.center.y)
-      / Math.max(0.001, active.startDistance);
-    const ratioX = proportionsLocked || selectedLayers.length > 1 ? uniform
-      : Math.abs(local.x / Math.max(0.001, active.startLocal.x));
-    const ratioY = proportionsLocked || selectedLayers.length > 1 ? uniform
-      : Math.abs(local.y / Math.max(0.001, active.startLocal.y));
-    onTransformsChange(active.transforms.map(({ layerId, transform }) => ({ layerId, transform: {
-      ...transform,
-      x: clamp(active.center.x + (0.5 + transform.x - active.center.x) * ratioX - 0.5, DESIGN_LIMITS.x),
-      y: clamp(active.center.y + (0.5 + transform.y - active.center.y) * ratioY - 0.5, DESIGN_LIMITS.y),
-      scaleX: clamp(transform.scaleX * ratioX, DESIGN_LIMITS.scaleX),
-      scaleY: clamp(transform.scaleY * ratioY, DESIGN_LIMITS.scaleY),
-    } })), 'canvas:scale');
+    if (active.uniform) {
+      const ratio = Math.hypot(point.x - active.center.x, point.y - active.center.y)
+        / Math.max(0.001, active.startDistance);
+      onTransformsChange(scaleSelectionBy(active.layers, ratio), 'canvas:scale');
+    } else {
+      const layer = active.layers[0];
+      const local = layer && worldPointToLayerLocal(layer, point);
+      if (!layer || !local || !active.startLocal) return;
+      // Invert the complete original matrix, including mirrors, rotation and
+      // skew. Merely subtracting the angle gives the wrong axes after a skew.
+      const axisRatio = (axis: 'x' | 'y') => {
+        const start = active.startLocal![axis] - 0.5;
+        return Math.abs(start) < 1e-8 ? 1 : Math.abs((local[axis] - 0.5) / start);
+      };
+      onTransformsChange(scaleLayerAxes(layer, { x: axisRatio('x'), y: axisRatio('y') }), 'canvas:scale');
+    }
   };
 
   const endGesture = (event: PointerEvent) => {
+    if (endTouch(event)) return;
     if (endPan(event)) return;
     const activeMarquee = marqueeRef.current;
     if (activeMarquee?.pointerId === event.pointerId) {
@@ -535,7 +589,7 @@ export default function Preview({
       const bottom = Math.max(activeMarquee.start.y, activeMarquee.current.y);
       const found = design.layers.filter((candidate) => candidate.visible
         && boundsIntersect({ left, top, right, bottom }, layerWorldBounds(candidate))).map((candidate) => candidate.id);
-      onSelectionChange(activeMarquee.additive ? [...new Set([...selectedLayerIds, ...found])] : found.length > 0 ? found : selectedLayerIds);
+      onSelectionChange(activeMarquee.additive ? [...new Set([...selectedLayerIds, ...found])] : found);
       marqueeRef.current = null;
       setMarquee(null);
       return;
@@ -585,6 +639,7 @@ export default function Preview({
   };
 
   const cancelGesture = (event: PointerEvent) => {
+    if (endTouch(event)) return;
     if (endPan(event)) return;
     if (draftRef.current?.pointerId === event.pointerId) {
       draftRef.current = null;
@@ -610,11 +665,10 @@ export default function Preview({
     if (!direction) return;
     event.preventDefault();
     const amount = event.shiftKey ? 0.05 : 0.01;
-    onTransformsChange(selectedLayers.map((candidate) => ({ layerId: candidate.id, transform: {
-      ...candidate.transform,
-      x: clamp(candidate.transform.x + (direction[0] ?? 0) * amount, DESIGN_LIMITS.x),
-      y: clamp(candidate.transform.y + (direction[1] ?? 0) * amount, DESIGN_LIMITS.y),
-    } })), 'canvas:nudge');
+    onTransformsChange(translateSelection(selectedLayers, {
+      x: (direction[0] ?? 0) * amount,
+      y: (direction[1] ?? 0) * amount,
+    }), 'canvas:nudge');
   };
 
   const copy = async () => {
@@ -675,17 +729,37 @@ export default function Preview({
           <button
             type="button"
             className="compare-button"
+            disabled={selectedLayers.length === 0}
+            title="Compare the selected objects with their original transform and color"
             onPointerDown={() => setShowOriginal(true)}
             onPointerUp={() => setShowOriginal(false)}
             onPointerCancel={() => setShowOriginal(false)}
             onPointerLeave={() => setShowOriginal(false)}
+            onKeyDown={(event) => {
+              if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                setShowOriginal(true);
+              }
+            }}
+            onKeyUp={() => setShowOriginal(false)}
+            onBlur={() => setShowOriginal(false)}
           >
             Hold to compare
           </button>
         </div>
       </div>
 
-      <div className="paint-toolbar" aria-label="Canvas tools">
+      <div className="canvas-quick-actions">
+        <button type="button" onClick={onChooseEmoji}>Change emoji</button>
+        <button type="button" onClick={onAddText}>Add text</button>
+        <button type="button" aria-expanded={toolsOpen || tool !== 'select'}
+          aria-controls="drawing-tools" onClick={() => {
+            if (tool !== 'select') onToolChange('select');
+            setToolsOpen(!(toolsOpen || tool !== 'select'));
+          }}>Draw &amp; erase</button>
+      </div>
+      <div className="paint-toolbar" id="drawing-tools" aria-label="Canvas tools"
+        hidden={!toolsOpen && tool === 'select'}>
         <div className="tool-buttons">
           {(['select', 'brush', 'eraser', 'restore', 'fill', 'pan'] as const).map((candidate) => (
             <button type="button" key={candidate} aria-pressed={tool === candidate}
@@ -701,6 +775,12 @@ export default function Preview({
             </button>
           ))}
         </div>
+        {tool !== 'select' && tool !== 'pan' && <p className="paint-target" role="status">
+          {tool === 'fill' ? 'Fill samples all visible objects.'
+            : tool === 'brush' ? drawingLayer ? `Drawing on ${drawingLayer.name}` : 'Drawing on a new paint layer'
+              : selectedLayer ? `${tool === 'eraser' ? 'Erasing' : 'Restoring'} ${selectedLayer.name}`
+                : 'Select one object to erase or restore.'}
+        </p>}
         {(tool === 'brush' || tool === 'eraser' || tool === 'restore' || tool === 'fill') && (
           <div className="brush-settings">
             {(tool === 'brush' || tool === 'fill') && (
@@ -774,9 +854,17 @@ export default function Preview({
           className={`preview-viewport interactive-canvas tool-${tool}`}
           tabIndex={0}
           aria-label={`Interactive emoji canvas. ${tool === 'select' ? 'Use arrow keys to move selected layers.' : `Drag to use the ${tool}.`}`}
-          onPointerDown={tool === 'fill' ? undefined : beginPaint}
+          onPointerDown={tool === 'fill' ? (event) => {
+            suppressFill.current = startTouchNavigation(event);
+            if (spacePressed.current || event.button === 1) {
+              suppressFill.current = true;
+              beginPan(event);
+            }
+          } : beginPaint}
           onClick={tool === 'fill'
-            ? (event) => beginPaint(event as unknown as PointerEvent<HTMLDivElement>)
+            ? (event) => {
+              if (!suppressFill.current) commitFill(event as unknown as PointerEvent<HTMLDivElement>);
+            }
             : undefined}
           onKeyDown={nudge}
           onKeyUp={onTransformCommit}
@@ -831,15 +919,15 @@ export default function Preview({
                 </g>
               </svg>
             )}
-            {!showOriginal && tool === 'select' && (
+            {!showOriginal && tool === 'select' && (selectedLayers.length > 0 || marquee) && (
               <svg className="transform-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
+              {selectedLayers.length > 0 && <g>
               <line className="rotate-stem" x1={top.x} y1={top.y}
                 x2={rotateHandle.x} y2={rotateHandle.y} />
               <polygon
                 className="selection-box move-handle"
                 points={corners.map((point) => `${point.x},${point.y}`).join(' ')}
-                onPointerDown={(event) => beginGesture('move', event)}
               />
               {corners.map((point, index) => (
                 <circle key={index} className="corner-handle" cx={point.x} cy={point.y}
@@ -849,6 +937,7 @@ export default function Preview({
               <circle className="rotate-handle" cx={rotateHandle.x} cy={rotateHandle.y}
                 r={previewRenderSize * 0.028 / viewport.zoom}
                 onPointerDown={(event) => beginGesture('rotate', event)} />
+              </g>}
               {canvasSettings.showGuides && snapGuides.x !== undefined && <line className="snap-guide"
                 x1={snapGuides.x * previewRenderSize} x2={snapGuides.x * previewRenderSize}
                 y1="0" y2={previewRenderSize} />}
@@ -877,6 +966,15 @@ export default function Preview({
           if (png) assetDelivery.downloadPng(png, 'seemoji.png');
         },
       })}
+      <details className="output-context-preview">
+        <summary>Chat preview</summary>
+        <div className="chat-previews">
+          <div className="chat-preview light"><canvas ref={lightPreviewRef} width={32} height={32}
+            aria-label="Composition at 32 pixels on a light background" /><span>Light · 32px</span></div>
+          <div className="chat-preview dark"><canvas ref={darkPreviewRef} width={32} height={32}
+            aria-label="Composition at 32 pixels on a dark background" /><span>Dark · 32px</span></div>
+        </div>
+      </details>
       {shareAlikeApplies && (
         <p className="share-alike-notice">
           This PNG is a CC BY-SA 4.0 derivative. Share-alike applies if you distribute it.

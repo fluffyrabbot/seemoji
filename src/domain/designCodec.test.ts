@@ -3,14 +3,45 @@ import { DEFAULT_DESIGN, getEmojiLayer, type DesignDocumentV1 } from './design';
 import { decodeDesignDocument } from './designCodec';
 
 describe('design document codec', () => {
-  it('round-trips a valid V2 scene document', () => {
+  it('round-trips a valid V3 scene document', () => {
     expect(decodeDesignDocument(JSON.parse(JSON.stringify(DEFAULT_DESIGN)))).toEqual({
       ok: true,
       value: DEFAULT_DESIGN,
     });
   });
 
-  it('explicitly promotes a V1 recipe into a V2 emoji layer', () => {
+  it('promotes an existing V2 scene into an explicit empty group collection', () => {
+    const { groups: _groups, ...current } = DEFAULT_DESIGN;
+    expect(decodeDesignDocument({ ...current, version: 2 })).toEqual({ ok: true, value: DEFAULT_DESIGN });
+  });
+
+  it('round-trips named organizational groups without changing layer order', () => {
+    const emoji = getEmojiLayer(DEFAULT_DESIGN);
+    const scene = { ...DEFAULT_DESIGN, layers: [emoji, { ...emoji, id: 'emoji-2' }],
+      groups: [{ id: 'group-1', name: 'Badge', layerIds: [emoji.id, 'emoji-2'] }] };
+    expect(decodeDesignDocument(JSON.parse(JSON.stringify(scene)))).toEqual({ ok: true, value: scene });
+  });
+
+  it.each([
+    undefined,
+    null,
+    [{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1'] }],
+    [{ id: 'emoji-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] }],
+    [{ id: 'group-1', name: '', layerIds: ['emoji-1', 'emoji-2'] }],
+    [{ id: 'group-1', name: ' Badge ', layerIds: ['emoji-1', 'emoji-2'] }],
+    [{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'missing'] }],
+    [{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-1'] }],
+    [{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] },
+      { id: 'group-2', name: 'Caption', layerIds: ['emoji-2', 'emoji-3'] }],
+    [{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] },
+      { id: 'group-1', name: 'Caption', layerIds: ['emoji-3', 'emoji-4'] }],
+  ])('rejects invalid V3 group membership %#', (groups) => {
+    const emoji = getEmojiLayer(DEFAULT_DESIGN);
+    const layers = ['emoji-1', 'emoji-2', 'emoji-3', 'emoji-4'].map((id) => ({ ...emoji, id }));
+    expect(decodeDesignDocument({ ...DEFAULT_DESIGN, layers, groups }).ok).toBe(false);
+  });
+
+  it('explicitly promotes a V1 recipe into a V3 emoji layer', () => {
     const layer = getEmojiLayer(DEFAULT_DESIGN);
     const { x: _x, y: _y, ...positionlessTransform } = layer.transform;
     const versionOne: DesignDocumentV1 = {
@@ -22,13 +53,13 @@ describe('design document codec', () => {
     const decoded = decodeDesignDocument(versionOne);
     expect(decoded.ok).toBe(true);
     if (decoded.ok) {
-      expect(decoded.value.version).toBe(2);
+      expect(decoded.value.version).toBe(3);
       expect(getEmojiLayer(decoded.value).transform).toMatchObject({ x: 0, y: 0, rotate: 18 });
     }
   });
 
   it('rejects unknown versions instead of silently coercing them', () => {
-    const decoded = decodeDesignDocument({ ...DEFAULT_DESIGN, version: 3 });
+    const decoded = decodeDesignDocument({ ...DEFAULT_DESIGN, version: 4 });
     expect(decoded.ok).toBe(false);
     if (!decoded.ok) expect(decoded.error).toContain('unsupported');
   });

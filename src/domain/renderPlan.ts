@@ -6,8 +6,7 @@ import {
 } from './design';
 
 const DEG = Math.PI / 180;
-const BASE_GLYPH_RATIO = 0.72;
-const SAFETY_MARGIN_RATIO = 0.02;
+export const BASE_GLYPH_RATIO = 0.72;
 
 export interface LinearMatrix {
   readonly a: number;
@@ -96,28 +95,14 @@ export function createEmojiRenderPlan(layer: EmojiLayer, size: number): RenderPl
   }
 
   const { transform, appearance, visible } = layer;
-  const linear = createLinearTransform(transform);
+  const matrix = createLayerMatrix(transform, size);
 
   const glyphSize = size * BASE_GLYPH_RATIO;
   const half = glyphSize / 2;
-  const extentX = Math.abs(linear.a) * half + Math.abs(linear.c) * half;
-  const extentY = Math.abs(linear.b) * half + Math.abs(linear.d) * half;
+  const extentX = Math.abs(matrix.a) * half + Math.abs(matrix.c) * half;
+  const extentY = Math.abs(matrix.b) * half + Math.abs(matrix.d) * half;
   const blurPixels = appearance.blur * size;
   const outlinePixels = (appearance.outline?.width ?? 0) * size;
-  const effectPadding = blurPixels * 3 + outlinePixels + size * SAFETY_MARGIN_RATIO;
-  const availableHalf = size / 2 - effectPadding;
-  if (availableHalf <= 0) {
-    throw new RangeError('effects leave no drawable area at this export size');
-  }
-  const fit = Math.min(1, availableHalf / extentX, availableHalf / extentY);
-  const fitted: LinearMatrix = {
-    a: linear.a * fit,
-    b: linear.b * fit,
-    c: linear.c * fit,
-    d: linear.d * fit,
-  };
-  const fittedExtentX = extentX * fit;
-  const fittedExtentY = extentY * fit;
   const padding = blurPixels * 3 + outlinePixels;
 
   const filters: string[] = [];
@@ -130,21 +115,19 @@ export function createEmojiRenderPlan(layer: EmojiLayer, size: number): RenderPl
     size,
     visible,
     glyphSize,
-    matrix: {
-      ...fitted,
-      e: size / 2 + transform.x * size,
-      f: size / 2 + transform.y * size,
-    },
+    // Every layer obeys the same explicit scene transform. Content outside the
+    // canvas is clipped by the output surface, never silently scaled to fit.
+    matrix,
     blurPixels,
     outline: appearance.outline
       ? { widthPixels: outlinePixels, color: appearance.outline.color }
       : null,
     filters,
     contentBounds: {
-      left: size / 2 + transform.x * size - fittedExtentX - padding,
-      top: size / 2 + transform.y * size - fittedExtentY - padding,
-      right: size / 2 + transform.x * size + fittedExtentX + padding,
-      bottom: size / 2 + transform.y * size + fittedExtentY + padding,
+      left: matrix.e - extentX - padding,
+      top: matrix.f - extentY - padding,
+      right: matrix.e + extentX + padding,
+      bottom: matrix.f + extentY + padding,
     },
   };
 }

@@ -24,13 +24,15 @@ both** clears the lineage and retains two independent projects. Each operation v
 current revisions in one IndexedDB transaction; competing resolutions from another tab cannot
 partially apply. An original project cannot be deleted while it has unresolved conflicts.
 
-**Save now** and `Cmd/Ctrl+S` flush pending autosave work. Starring a project adds
-quick access without copying its design. **Use as template** is the explicit copy
+**Save now** and `Cmd/Ctrl+S` flush pending autosave work. **Add favorite** adds
+quick access without copying its design. **Make a copy** is the explicit copy
 operation and creates a new project with a new identity.
 
 Project JSON exports use a versioned envelope containing identity, name,
-timestamps, star metadata, and a strictly decoded `DesignDocumentV2`. Import also
-accepts a bare V1 or V2 design recipe and always creates a new project identity.
+timestamps, star metadata, and a strictly decoded `DesignDocumentV3`. Import also
+accepts bare V1 recipes or V2 scenes, migrates them with an explicit empty group
+collection, and always creates a new project identity. Current V3 scenes require
+their group collection and reject invalid membership.
 Projects use IndexedDB. Canvas preferences remain separate device settings and
 are intentionally excluded from exported artwork.
 
@@ -64,15 +66,70 @@ nothing and refreshes the recovery panel to the latest state.
 
 ## History and layer clipboard
 
-Undo history is bounded to 100 scene states. The history row exposes the most
-recent eight states and can move directly back to one while retaining the
-newer states as redo steps.
+Undo history is bounded to 100 scene states. Undo and redo move through those
+states; pointer and slider gestures are committed as one logical history step.
 
 Layer copy and paste are internal to the current browser session. Pasted and
 duplicated layers receive new IDs, are offset down and right, and become the
-active selection. Grouping is a workspace selection aid: selecting any member
-recalls the group for shared transforms, while ungrouping leaves the layers and
-their ordering unchanged.
+active selection. The offset is constrained once for the whole selection so
+objects retain their spacing near a canvas limit. Copies retain paint order.
+
+## Named groups
+
+Groups are durable organizational selection units in the design. Each has a
+stable ID, an editable name, and at least two member layer IDs. Membership is
+flat and non-overlapping. Groups preserve each member's own transform, mask,
+opacity, and paint order.
+
+**Group** creates a saved group from the selection. **Saved groups** in Objects
+allows selecting, renaming, and ungrouping it. Selecting or Shift-toggling any
+member acts on the whole group, including after a project opens. Grouping,
+renaming, regrouping, and ungrouping participate in normal undo/redo and autosave.
+Regrouping existing groups combines their complete memberships.
+
+Project reload, editable export/import, workspace archives, and project copies
+retain groups. Duplicating or pasting a complete group assigns fresh group and
+layer IDs and remaps membership together in one undo step. Duplicating one
+member alone creates an independent object. Deleting a member removes its
+reference; a group dissolves when fewer than two members remain. Undo restores
+the corresponding membership with the objects.
+
+## Emoji picking and selection
+
+Emoji choices explicitly target **Add emoji** or **Replace selected emoji**. Adding validates
+the requested artwork before inserting a new object; insertion and selection form one undo
+step. Replacement names the selected emoji object and preserves its placement and style.
+Changing the artwork pack while browsing Add affects future choices. Changing it while
+replacing remaps only the named emoji object.
+
+Asynchronous artwork requests capture their project, editor session, target, and request
+generation before loading the catalog. A project switch, session replacement, changed source,
+or newer picker request prevents stale artwork from being applied. Validation failures leave
+the scene and history unchanged.
+
+The inspector follows the current selection. Transform commands target explicit object IDs,
+and emoji appearance commands apply only to the named emoji object. Reset restores transforms
+and emoji appearance for the selected objects in one undo step, preserving other objects,
+artwork sources, text, drawing strokes, and masks. Deselecting is a valid editor state and does
+not change the scene. Documents still contain at least one emoji object.
+
+## Responsive workspace and styles
+
+The compact picker starts with popular emoji and successful session recents. Search accepts
+names, keywords, and complete pasted emoji; the full name catalog loads on first search
+interaction. **See all** expands the collection, and the **Artwork pack** disclosure exposes
+pack/version/style choices. Search failures can be retried without changing the design.
+
+Quick styles render the current canonical artwork. Original restores color and transforms
+while preserving position; Squish preserves size while changing aspect; Tilt sets a fixed
+angle; Sticker adds a white edge. Styles can be reapplied without accumulating distortion.
+Detailed properties load only after **More editing controls** opens.
+
+On phones, **Emoji**, **Objects**, and **Edit** switch the independently scrolling lower
+panel while the canvas and Copy/Download actions remain in view. **Projects** opens local
+project actions. **Add text** selects the new text and opens Edit; **Change emoji** opens and
+focuses search. **Chat preview** shows the composition at 32 display pixels on light and dark
+backgrounds; it does not change the chosen PNG export resolution.
 
 ## Keyboard map
 
@@ -87,9 +144,17 @@ their ordering unchanged.
 | Flush project autosave | `Cmd/Ctrl+S` |
 | Undo / redo | `Cmd/Ctrl+Z`, `Shift+Cmd/Ctrl+Z` |
 | Delete selection | `Backspace` or `Delete` |
+| Deselect and return to Select | `Escape` |
+| Temporarily pan the canvas | Hold `Space` and drag |
 
 Tool shortcuts are ignored while typing in an input, textarea, selector, or
 editable field. Save-now remains available from a project-name field.
+Tool and object creation shortcuts also ignore command and Alt modifiers.
+
+Two fingers pan and zoom around their midpoint. After a pinch starts, the remaining finger
+continues panning until every finger lifts, so ending the pinch cannot accidentally paint or
+move an object. Trackpad pinch and command-wheel zoom preserve the canvas point under the
+pointer. Zoom remains between 50% and 400%.
 
 ## Grid and snapping
 

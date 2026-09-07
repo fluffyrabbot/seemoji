@@ -12,6 +12,7 @@ import {
   type RasterLayer,
   type RasterRun,
   type SceneLayer,
+  type SelectionGroup,
   type ShapeLayer,
   type StrokeLayer,
   type StrokePoint,
@@ -21,6 +22,7 @@ import {
 import { DESIGN_CAPACITY } from './designCapacity';
 import { toCodepoint, type EmojiAssetRef } from './emoji';
 import { isPackId, isPackStyle } from './pack';
+import { selectionGroupError } from './selectionGroups';
 
 export type DecodeResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -201,9 +203,10 @@ function decodeDesignDocumentV1(document: Record<string, unknown>): DecodeResult
   };
 }
 
-export function migrateDesignDocumentV1(document: DesignDocumentV1): DesignDocumentV2 {
+export function migrateDesignDocumentV1(document: DesignDocumentV1): DesignDocument {
   return {
-    version: 2,
+    version: 3,
+    groups: [],
     canvas: { background: 'transparent' },
     layers: [
       {
@@ -560,7 +563,24 @@ function decodeDesignDocumentV2(document: Record<string, unknown>): DecodeResult
   };
 }
 
-/** Decodes the current format and explicitly promotes persisted V1 recipes into V2 scenes. */
+function decodeSelectionGroups(value: unknown, layers: readonly SceneLayer[]): DecodeResult<readonly SelectionGroup[]> {
+  if (!Array.isArray(value) || value.length > Math.floor(layers.length / 2)) {
+    return { ok: false, error: 'groups must be an array bounded by available layer membership' };
+  }
+  const groups: SelectionGroup[] = [];
+  for (const raw of value) {
+    const group = record(raw);
+    if (!group || typeof group.id !== 'string' || typeof group.name !== 'string'
+        || !Array.isArray(group.layerIds) || !group.layerIds.every((id) => typeof id === 'string')) {
+      return { ok: false, error: 'each group must contain an id, name, and layerIds array' };
+    }
+    groups.push({ id: group.id, name: group.name, layerIds: group.layerIds });
+  }
+  const error = selectionGroupError(groups, layers);
+  return error ? { ok: false, error } : { ok: true, value: groups };
+}
+
+/** V1 recipes and V2 scenes explicitly migrate into the current grouped scene format. */
 export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocument> {
   const document = record(value);
   if (!document) return { ok: false, error: 'design document must be an object' };
@@ -568,7 +588,16 @@ export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocumen
     const decoded = decodeDesignDocumentV1(document);
     return decoded.ok ? { ok: true, value: migrateDesignDocumentV1(decoded.value) } : decoded;
   }
-  if (document.version === 2) return decodeDesignDocumentV2(document);
+  if (document.version === 2 || document.version === 3) {
+    const scene = decodeDesignDocumentV2(document);
+    if (!scene.ok) return scene;
+    const groups = document.version === 2
+      ? { ok: true as const, value: [] }
+      : decodeSelectionGroups(document.groups, scene.value.layers);
+    return groups.ok
+      ? { ok: true, value: { ...scene.value, version: 3, groups: groups.value } }
+      : groups;
+  }
   return {
     ok: false,
     error: `unsupported design document version: ${String(document.version)}`,

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Project } from '../domain/project';
 
 interface Props {
@@ -21,6 +21,7 @@ interface Props {
 
 export default function ProjectBar({ name, projects, currentId, persistenceStatus,
   busy, onNameChange, onNew, onOpen, menu }: Props) {
+  const [projectsOpen, setProjectsOpen] = useState(false);
   return (
     <section className="project-bar" aria-label="Project controls">
       <div className="project-identity">
@@ -34,10 +35,14 @@ export default function ProjectBar({ name, projects, currentId, persistenceStatu
                 : persistenceStatus === 'conflict' ? 'Conflict needs resolution' : 'Local save failed'}
         </span>
       </div>
-      <div className="project-actions">
-        <button type="button" disabled={busy} onClick={onNew}>New</button>
+      <button type="button" className="project-toggle" aria-expanded={projectsOpen}
+        aria-controls="project-actions" onClick={() => setProjectsOpen(!projectsOpen)}>Projects</button>
+      <div className="project-actions" id="project-actions" data-open={projectsOpen}>
+        <button type="button" disabled={busy} onClick={() => { onNew(); setProjectsOpen(false); }}>New</button>
         <select aria-label="Open project" value={currentId} disabled={busy}
-          onChange={(event) => event.target.value && onOpen(event.target.value)}>
+          onChange={(event) => {
+            if (event.target.value) { onOpen(event.target.value); setProjectsOpen(false); }
+          }}>
           <option value="" disabled>Open…</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>

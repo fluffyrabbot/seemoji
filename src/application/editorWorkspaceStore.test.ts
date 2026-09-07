@@ -1,7 +1,8 @@
 import { IDBFactory } from 'fake-indexeddb';
 import { describe, expect, it } from 'vitest';
 import { IndexedDbProjectRepository } from '../adapters/browser/indexedDbProjectRepository';
-import { DEFAULT_TRANSFORM } from '../domain/design';
+import { DEFAULT_EMOJI_LAYER, DEFAULT_TRANSFORM } from '../domain/design';
+import { translateSelection } from '../domain/selectionTransforms';
 import type { Project } from '../domain/project';
 import type { ProjectQuarantineRecord } from '../domain/projectQuarantine';
 import type {
@@ -152,6 +153,40 @@ class GatedProjectRepository implements ProjectRepository {
 }
 
 describe('EditorWorkspaceStore', () => {
+  it('persists named groups through reopening and archives, with the first edit targeting every member', async () => {
+    const factory = new IDBFactory();
+    const databaseName = 'editor-persistent-groups';
+    const store = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, databaseName)));
+    await store.load();
+    store.dispatch({ type: 'add-layer', layer: { ...DEFAULT_EMOJI_LAYER, id: 'emoji-2' } });
+    store.dispatch({ type: 'create-group', groupId: 'group-1', name: 'Group 1', layerIds: ['emoji-1', 'emoji-2'] });
+    store.dispatch({ type: 'rename-group', groupId: 'group-1', name: 'Badge' });
+    await store.flush();
+    store.dispose();
+
+    const reopened = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, databaseName)));
+    await reopened.load();
+    const initial = reopened.getSnapshot().editor;
+    expect(initial.design.version).toBe(3);
+    expect(initial.design.groups).toEqual([{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] }]);
+    expect(initial.selectedLayerIds).toEqual(['emoji-1', 'emoji-2']);
+    reopened.dispatch({ type: 'update-layer-transforms', updates: translateSelection(
+      initial.design.layers.filter((layer) => initial.selectedLayerIds.includes(layer.id)), { x: 0.1, y: 0.1 },
+    ) });
+    expect(reopened.getSnapshot().editor.design.layers.map((layer) => layer.transform.x)).toEqual([0.1, 0.1]);
+    await reopened.flush();
+    const archive = await reopened.exportArchive();
+    const expected = reopened.getSnapshot().editor.design;
+    reopened.dispose();
+
+    const imported = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, 'editor-groups-import')));
+    await imported.load();
+    await imported.importArchive(JSON.parse(JSON.stringify(archive)));
+    expect(imported.getSnapshot().editor.design).toEqual(expected);
+    expect(imported.getSnapshot().editor.selectedLayerIds).toEqual(['emoji-1', 'emoji-2']);
+    imported.dispose();
+  });
+
   it('journals accepted name and design edits synchronously before an immediate flush', async () => {
     const factory = new IDBFactory();
     const databaseName = 'editor-workspace-synchronous-journal';
@@ -166,7 +201,8 @@ describe('EditorWorkspaceStore', () => {
     const unsubscribe = store.subscribe(() => { notifications += 1; });
     store.renameActive('Accepted immediately');
     store.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, x: 0.25, rotate: 30 },
     });
 
@@ -208,7 +244,8 @@ describe('EditorWorkspaceStore', () => {
 
     first.renameActive('');
     first.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, rotate: 20 },
     });
     await first.flush();
@@ -250,7 +287,8 @@ describe('EditorWorkspaceStore', () => {
     await second.load();
 
     first.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, rotate: 20 },
     });
     await first.flush();
@@ -287,7 +325,8 @@ describe('EditorWorkspaceStore', () => {
 
     second.renameActive('Remote edit');
     second.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, x: 0.2, rotate: -35 },
     });
     await second.flush();
@@ -326,7 +365,8 @@ describe('EditorWorkspaceStore', () => {
     const before = store.getSnapshot();
     expect(before.workspaceMutationInProgress).toBe(true);
     expect(store.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, rotate: 73 },
     })).toBe(before.editor);
     expect(store.renameActive('Must not leak')).toBe(before.workspace);
@@ -360,7 +400,8 @@ describe('EditorWorkspaceStore', () => {
     const before = store.getSnapshot();
     expect(before.workspaceMutationInProgress).toBe(true);
     expect(store.dispatch({
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...DEFAULT_TRANSFORM, x: 0.33 },
     })).toBe(before.editor);
     gate.release();

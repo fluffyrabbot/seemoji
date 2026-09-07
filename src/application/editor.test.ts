@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_APPEARANCE,
   DEFAULT_TRANSFORM,
   getEmojiLayer,
   type BrushStroke,
   type MaskStroke,
   type StrokeLayer,
   type StrokePoint,
+  type TextLayer,
 } from '../domain/design';
 import { DESIGN_CAPACITY } from '../domain/designCapacity';
 import { decodeDesignDocument } from '../domain/designCodec';
@@ -44,11 +46,169 @@ const strokeLayer = (
   mask,
 });
 
+const groupedEditor = () => {
+  const paint = editorReducer(INITIAL_EDITOR_STATE, { type: 'add-layer', layer: strokeLayer('paint-1') });
+  const morePaint = editorReducer(paint, { type: 'add-layer', layer: strokeLayer('paint-2') });
+  return editorReducer(morePaint, { type: 'create-group', groupId: 'group-1', name: 'Badge',
+    layerIds: ['emoji-1', 'paint-1'] });
+};
+
+describe('durable group editing', () => {
+  it('records grouping, renaming, and ungrouping in undo history without altering scene order', () => {
+    const grouped = groupedEditor();
+    expect(grouped.design.groups).toEqual([{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'paint-1'] }]);
+    const beforeGroup = editorReducer(grouped, { type: 'undo' });
+    expect(beforeGroup.design.groups).toEqual([]);
+    expect(beforeGroup.design.layers).toBe(grouped.design.layers);
+    const named = editorReducer(grouped, { type: 'rename-group', groupId: 'group-1', name: '  Reaction  ' });
+    expect(named.design.groups[0]!.name).toBe('Reaction');
+    expect(editorReducer(named, { type: 'undo' }).design).toBe(grouped.design);
+    const ungrouped = editorReducer(named, { type: 'remove-groups', groupIds: ['group-1'] });
+    expect(ungrouped.design.groups).toEqual([]);
+    expect(ungrouped.design.layers).toBe(named.design.layers);
+    expect(editorReducer(ungrouped, { type: 'undo' }).design).toBe(named.design);
+  });
+
+  it('selects and toggles groups as one selection unit through both selection commands', () => {
+    const grouped = groupedEditor();
+    const selected = editorReducer(grouped, { type: 'select-layers', layerIds: ['paint-1'] });
+    expect(selected.selectedLayerIds).toEqual(['emoji-1', 'paint-1']);
+    const plusOther = editorReducer(selected, { type: 'select-layer', layerId: 'paint-2', toggle: true });
+    const toggled = editorReducer(plusOther, { type: 'select-layer', layerId: 'paint-1', toggle: true });
+    expect(toggled.selectedLayerIds).toEqual(['paint-2']);
+    expect(editorReducer(toggled, { type: 'select-layer', layerId: 'emoji-1' }).selectedLayerIds)
+      .toEqual(['emoji-1', 'paint-1']);
+    expect(editorReducer(grouped, { type: 'load-design', design: { ...grouped.design,
+      layers: [...grouped.design.layers].reverse() } }).selectedLayerIds).toEqual(['emoji-1', 'paint-1']);
+  });
+
+  it('regroups whole existing groups and dissolves undersized groups after member deletion', () => {
+    const grouped = groupedEditor();
+    const merged = editorReducer(grouped, { type: 'create-group', groupId: 'group-2', name: 'All',
+      layerIds: ['paint-1', 'paint-2'] });
+    expect(merged.design.groups).toEqual([{ id: 'group-2', name: 'All', layerIds: ['emoji-1', 'paint-1', 'paint-2'] }]);
+    const removed = editorReducer(merged, { type: 'remove-layer', layerId: 'paint-1' });
+    expect(removed.design.groups[0]!.layerIds).toEqual(['emoji-1', 'paint-2']);
+    const dissolved = editorReducer(removed, { type: 'remove-layer', layerId: 'paint-2' });
+    expect(dissolved.design.groups).toEqual([]);
+    expect(editorReducer(dissolved, { type: 'undo' }).design).toBe(removed.design);
+  });
+
+  it('duplicates complete groups with fresh ids and original paint order, preserving spacing at limits', () => {
+    const grouped = groupedEditor();
+    const positioned = { ...grouped, design: { ...grouped.design,
+      layers: grouped.design.layers.map((layer, index) => ({ ...layer,
+        transform: { ...layer.transform, x: index === 0 ? 0.48 : 0.25 } })) } };
+    const duplicated = editorReducer(positioned, { type: 'duplicate-layers',
+      layerIds: ['paint-1', 'emoji-1'], duplicateIds: ['paint-copy', 'emoji-copy'], duplicateGroupIds: ['group-copy'] });
+    expect(duplicated.design.layers.slice(-2).map((layer) => layer.id)).toEqual(['emoji-copy', 'paint-copy']);
+    expect(duplicated.design.layers.at(-2)!.transform.x).toBeCloseTo(0.5);
+    expect(duplicated.design.layers.at(-1)!.transform.x).toBeCloseTo(0.27);
+    expect(duplicated.design.groups[1]).toEqual({ id: 'group-copy', name: 'Badge copy', layerIds: ['emoji-copy', 'paint-copy'] });
+    expect(editorReducer(duplicated, { type: 'undo' }).design).toBe(positioned.design);
+    expect(decodeDesignDocument(duplicated.design).ok).toBe(true);
+  });
+
+  it('preserves pasted groups as one undoable insertion and rejects references outside the pasted layers', () => {
+    const layers = [strokeLayer('copy-a'), strokeLayer('copy-b')];
+    const groups = [{ id: 'copy-group', name: 'Badge copy', layerIds: ['copy-a', 'copy-b'] }];
+    const pasted = editorReducer(INITIAL_EDITOR_STATE, { type: 'insert-layers', layers, groups });
+    expect(pasted.design.groups).toEqual(groups);
+    expect(pasted.selectedLayerIds).toEqual(['copy-a', 'copy-b']);
+    expect(editorReducer(pasted, { type: 'undo' }).design).toBe(INITIAL_EDITOR_STATE.design);
+    expect(editorReducer(INITIAL_EDITOR_STATE, { type: 'insert-layers', layers,
+      groups: [{ ...groups[0]!, layerIds: ['emoji-1', 'copy-a'] }] })).toBe(INITIAL_EDITOR_STATE);
+  });
+
+  it('keeps group identifiers reserved and refuses incomplete group remapping', () => {
+    const grouped = groupedEditor();
+    expect(editorReducer(grouped, { type: 'add-layer', layer: strokeLayer('group-1') })).toBe(grouped);
+    expect(editorReducer(grouped, { type: 'rename-group', groupId: 'group-1', name: '' })).toBe(grouped);
+    expect(editorReducer(grouped, { type: 'duplicate-layers', layerIds: ['emoji-1', 'paint-1'],
+      duplicateIds: ['copy-a', 'copy-b'], duplicateGroupIds: [] })).toBe(grouped);
+    expect(editorReducer(grouped, { type: 'duplicate-layers', layerIds: ['emoji-1', 'paint-1'],
+      duplicateIds: ['copy-a', 'copy-b'], duplicateGroupIds: ['copy-a'] })).toBe(grouped);
+  });
+});
+
 describe('editor reducer', () => {
+  it('rotates selected text without changing the original emoji', () => {
+    const text: TextLayer = {
+      id: 'text-1', kind: 'text', name: 'Caption', visible: true, opacity: 1,
+      transform: DEFAULT_TRANSFORM, mask: [],
+      bounds: { x: 0.2, y: 0.38, width: 0.6, height: 0.24 },
+      text: 'Hello', fontSize: 0.18, color: '#000000', fontFamily: 'sans-serif', align: 'center',
+    };
+    const added = editorReducer(INITIAL_EDITOR_STATE, { type: 'add-layer', layer: text });
+    const updated = editorReducer(added, {
+      type: 'update-layer-transform', layerId: text.id,
+      transform: { ...text.transform, rotate: 35 },
+    });
+    expect(updated.selectedLayerIds).toEqual([text.id]);
+    expect(updated.design.layers[0]).toBe(INITIAL_EDITOR_STATE.design.layers[0]);
+    expect(updated.design.layers[1]).toMatchObject({ transform: { rotate: 35 } });
+    expect(editorReducer(updated, { type: 'undo' }).design).toBe(added.design);
+  });
+
+  it('applies appearance and a complete style only to the requested second emoji', () => {
+    const original = getEmojiLayer(INITIAL_EDITOR_STATE.design);
+    const second = { ...original, id: 'emoji-2' };
+    const added = editorReducer(INITIAL_EDITOR_STATE, { type: 'add-layer', layer: second });
+    const styled = editorReducer(added, {
+      type: 'apply-layer-style', layerId: second.id,
+      transform: { ...DEFAULT_TRANSFORM, rotate: 20 },
+      appearance: { ...DEFAULT_APPEARANCE, hue: 40 },
+    });
+    expect(styled.past).toHaveLength(2);
+    expect(styled.design.layers[0]).toBe(original);
+    expect(styled.design.layers[1]).toMatchObject({ transform: { rotate: 20 }, appearance: { hue: 40 } });
+    expect(editorReducer(styled, { type: 'undo' }).design).toBe(added.design);
+    const recolored = editorReducer(styled, {
+      type: 'update-appearance', layerId: second.id,
+      appearance: { ...DEFAULT_APPEARANCE, hue: -30 },
+    });
+    expect(recolored.design.layers[0]).toBe(original);
+    expect(recolored.design.layers[1]).toMatchObject({ appearance: { hue: -30 } });
+  });
+
+  it('resets only named objects in one undo step while preserving contents and masks', () => {
+    const original = getEmojiLayer(INITIAL_EDITOR_STATE.design);
+    const mask = [maskStroke('mask-1', 2)];
+    const second = { ...original, id: 'emoji-2', mask,
+      transform: { ...DEFAULT_TRANSFORM, rotate: 30 },
+      appearance: { ...DEFAULT_APPEARANCE, hue: 80 } };
+    const paint = { ...strokeLayer('paint-1', [brushStroke('stroke-1', 2)], mask),
+      transform: { ...DEFAULT_TRANSFORM, x: 0.3 } };
+    const state = { ...INITIAL_EDITOR_STATE,
+      design: { ...INITIAL_EDITOR_STATE.design, layers: [original, second, paint] } };
+    const reset = editorReducer(state, { type: 'reset-layers', layerIds: [second.id, paint.id] });
+    expect(reset.design.layers).toHaveLength(3);
+    expect(reset.design.layers[0]).toBe(original);
+    expect(reset.design.layers[1]).toEqual({ ...second, transform: DEFAULT_TRANSFORM, appearance: DEFAULT_APPEARANCE });
+    expect(reset.design.layers[2]).toEqual({ ...paint, transform: DEFAULT_TRANSFORM });
+    expect(reset.past).toHaveLength(1);
+    expect(editorReducer(reset, { type: 'undo' }).design).toBe(state.design);
+    expect(editorReducer(reset, { type: 'reset-layers', layerIds: [] })).toBe(reset);
+  });
+
+  it('supports empty selection without fallback after deselect, removal, and undo', () => {
+    const deselected = editorReducer(INITIAL_EDITOR_STATE, { type: 'select-layers', layerIds: [] });
+    expect(deselected.selectedLayerIds).toEqual([]);
+    const toggled = editorReducer(INITIAL_EDITOR_STATE, { type: 'select-layer', layerId: 'emoji-1', toggle: true });
+    expect(toggled.selectedLayerIds).toEqual([]);
+    const added = editorReducer(deselected, { type: 'add-layer', layer: strokeLayer('paint-1') });
+    const removed = editorReducer(added, { type: 'remove-layer', layerId: 'paint-1' });
+    expect(removed.selectedLayerIds).toEqual([]);
+    expect(editorReducer(removed, { type: 'undo' }).selectedLayerIds).toEqual([]);
+    expect(editorReducer(added, { type: 'undo' }).selectedLayerIds).toEqual([]);
+    expect(deselected.past).toEqual([]);
+  });
+
   it('updates the emoji layer without changing source identity', () => {
     const initialLayer = getEmojiLayer(INITIAL_EDITOR_STATE.design);
     const state = editorReducer(INITIAL_EDITOR_STATE, {
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...initialLayer.transform, rotate: 20 },
     });
     expect(getEmojiLayer(state.design).transform.rotate).toBe(20);
@@ -62,10 +222,11 @@ describe('editor reducer', () => {
       source: createEmojiAssetRef('👍'),
     });
     const edited = editorReducer(selected, {
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...getEmojiLayer(selected.design).transform, rotate: 45 },
     });
-    const reset = editorReducer(edited, { type: 'reset' });
+    const reset = editorReducer(edited, { type: 'reset-layers', layerIds: ['emoji-1'] });
     expect(getEmojiLayer(reset.design).source.grapheme).toBe('👍');
     expect(getEmojiLayer(reset.design).transform.rotate).toBe(0);
   });
@@ -92,12 +253,14 @@ describe('editor reducer', () => {
   it('coalesces a gesture into one undo step and supports redo', () => {
     const initial = getEmojiLayer(INITIAL_EDITOR_STATE.design).transform;
     const first = editorReducer(INITIAL_EDITOR_STATE, {
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...initial, x: 0.1 },
       historyGroup: 'canvas:move',
     });
     const second = editorReducer(first, {
-      type: 'update-transform',
+      type: 'update-layer-transform',
+      layerId: 'emoji-1',
       transform: { ...initial, x: 0.2 },
       historyGroup: 'canvas:move',
     });
@@ -231,7 +394,7 @@ describe('editor reducer', () => {
   });
 
   it('duplicates a selection with an offset and undoes its next transformation', () => {
-    const duplicated = editorReducer(INITIAL_EDITOR_STATE, { type: 'duplicate-layers',
+    const duplicated = editorReducer(INITIAL_EDITOR_STATE, { type: 'duplicate-layers', duplicateGroupIds: [],
       layerIds: ['emoji-1'], duplicateIds: ['emoji-2'], offset: 0.05 });
     expect(duplicated.design.layers[1]).toMatchObject({ id: 'emoji-2', transform: { x: 0.05, y: 0.05 } });
     expect(duplicated.selectedLayerIds).toEqual(['emoji-2']);
@@ -336,7 +499,7 @@ describe('editor reducer', () => {
     expect(editorReducer(base, { type: 'load-design', design: invalidDesign })).toBe(base);
     expect(editorReducer(base, { type: 'replace-design', design: invalidDesign })).toBe(base);
     expect(editorReducer(base, { type: 'add-layer', layer: invalidLayer })).toBe(base);
-    expect(editorReducer(base, { type: 'insert-layers', layers: [invalidLayer] })).toBe(base);
+    expect(editorReducer(base, { type: 'insert-layers', groups: [], layers: [invalidLayer] })).toBe(base);
     expect(editorReducer(base, {
       type: 'update-layer',
       layer: { ...invalidLayer, id: largeLayer.id },
@@ -349,7 +512,7 @@ describe('editor reducer', () => {
       (_, index) => strokeLayer(`paint-${index}`),
     );
     const oneSlotLeft = editorReducer(INITIAL_EDITOR_STATE, {
-      type: 'insert-layers',
+      type: 'insert-layers', groups: [],
       layers: additions,
     });
     expect(oneSlotLeft.design.layers).toHaveLength(DESIGN_CAPACITY.layers - 1);
@@ -368,7 +531,7 @@ describe('editor reducer', () => {
     })).toBe(full);
 
     expect(editorReducer(oneSlotLeft, {
-      type: 'duplicate-layers',
+      type: 'duplicate-layers', duplicateGroupIds: [],
       layerIds: ['emoji-1', 'paint-0'],
       duplicateIds: ['emoji-copy', 'paint-copy'],
     })).toBe(oneSlotLeft);

@@ -1,0 +1,17 @@
+.saved-style-library { margin-top: .8rem; font-size: .78rem; }
+.saved-style-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.saved-style-heading h3 { margin: 0; font-size: .85rem; }
+.saved-style-library p { color: #b7bdce; line-height: 1.5; }
+.saved-style-heading button, .saved-style-list button { padding: .4rem .5rem; font-size: .72rem; }
+.saved-style-form { display: flex; align-items: end; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
+.saved-style-form label { display: grid; gap: .35rem; flex: 1 1 150px; min-width: 0; }
+.saved-style-form input { min-width: 0; width: 100%; font-size: 16px; }
+.saved-style-form button { min-height: 40px; }
+.saved-style-list { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.saved-style-list li { display: flex; align-items: center; gap: .4rem; border-top: 1px solid #3d4050; padding: .6rem 0; }
+.saved-style-list li > div { min-width: 0; flex: 1; }
+.saved-style-list strong { display: block; overflow-wrap: anywhere; }
+.saved-style-list small { display: block; color: #a3a9bc; margin-top: .2rem; }
+.saved-style-library .saved-style-error { color: #ffb3be; }
+.saved-style-capacity { font-size: .7rem; }
+@media (max-width: 760px) { .saved-style-list button { min-height: 40px; } }

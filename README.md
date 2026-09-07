@@ -39,11 +39,10 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-169,000 raw bytes and 51,000 gzip-9 bytes) and all deferred or otherwise
-unreachable chunks (at most 12,000 raw bytes and 4,000 gzip-9 bytes). It also
-reports the informational total. The initial limit is the rounded measured
-baseline for the editor experiment seam, assignment runtime, and semantic export
-events; the current build emits no deferred JavaScript. See
+190,000 raw bytes and 58,500 gzip-9 bytes) and all deferred or otherwise
+unreachable chunks (at most 23,000 raw bytes and 9,300 gzip-9 bytes). It also
+reports the informational total. The limits track the measured contextual editor, with advanced controls,
+the full emoji search catalog, and saved-style storage loaded only on interaction. See
 [JavaScript bundle budget](docs/bundle-budget.md) for the graph classification,
 measurements, and policy for changing either ceiling.
 
@@ -80,7 +79,7 @@ EditorWorkspaceStore ────────► WorkspaceController ───�
    └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
-DesignDocumentV2 scene
+DesignDocumentV3 scene + named selection groups
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -125,14 +124,16 @@ not treat Strict Mode behavior as equivalent between the two runtimes.
 
 ## Design and rendering invariants
 
-`DesignDocumentV2` is an ordered scene with transparent canvas metadata and a
+`DesignDocumentV3` is an ordered scene with transparent canvas metadata, durable named selection groups, and a
 common scene-node contract for emoji, pressure strokes, geometric shapes, text,
 and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
 instead of changing source artwork or brush strokes. Paint layers also own an
 affine transform, so moving, resizing, and rotating them never rewrites points.
-Unknown document versions are rejected. V1 recipes have an explicit one-way
-migration into the current scene model.
+Unknown document versions are rejected. V1 recipes and V2 scenes have explicit one-way
+migrations into the current scene model. Groups retain their identity through history,
+autosave, project export, and workspace archives. Their non-overlapping membership
+organizes selection without changing layer paint order.
 
 The editor coalesces pointer and slider gestures into bounded undo history.
 Position is stored in output-relative coordinates, so direct canvas movement is
@@ -170,10 +171,18 @@ surface, receives its mask with `destination-out`, and is then composited at
 layer opacity. Content-keyed per-layer caches avoid repainting pixels for
 transform-only edits. Preview and PNG export therefore use the same paint pipeline.
 
-Blur and outline widths are stored as output-relative units. The pure render
-planner calculates affine bounds plus effect padding and fits extreme supported
-combinations inside the export square. Changing from 48px to 256px therefore
-changes resolution without changing the intended composition.
+Blur and outline widths are stored as output-relative units. Rendering, selection
+handles, masks, and inspector commands share the same affine geometry. Emoji are
+never implicitly resized to fit: oversized artwork and effects crop at the canvas
+edge. Changing from 48px to 256px changes resolution while preserving composition.
+Group moves, scaling, and rotation apply one constrained operation to the entire
+selection, preserving spacing and mirror behavior at the editable position limits.
+
+The inspector's **Saved styles** library stores named emoji transforms and effects
+in a separate IndexedDB capability. Applying a style preserves the selected emoji's
+position, artwork, identity, and masks, and is one undoable edit. The library loads
+only when opened; project backups contain project designs, while the style library
+remains local to this browser.
 
 Artwork comes from eight write-once snapshots published at
 `fluffyrabbot/seemoji-packs`: Twemoji, Noto Emoji, Fluent Emoji Color/Flat/High Contrast,
@@ -197,13 +206,13 @@ surprise file download.
 
 ## Current scope
 
-- Web app with responsive desktop, tablet, and mobile layouts
-- Static Twemoji artwork
+- Responsive desktop and tablet workspace, plus mobile editing panels with the canvas and export actions kept visible
+- Searchable canonical emoji artwork across eight packs, with explicit Add and Replace actions
 - Direct move, proportional resize, rotate, keyboard nudge, and before/after comparison
-- Undo/redo plus editable numeric controls and quick styles
+- Undo/redo, a selection-aware inspector, exact numeric controls, and rendered quick-style previews
 - Pressure-aware brush and non-destructive eraser tools
 - Mask restoration without destructive history edits
-- Zoomable, pannable, DPR-aware canvas viewport
+- Zoomable, pannable, DPR-aware canvas with Space-to-pan and two-finger pinch navigation
 - Layer selection, transforms, rename, duplicate, opacity, ordering, visibility, and deletion
 - Rectangle, ellipse, line, text, and tolerance-aware flood-fill layers
 - Shift-click and marquee multi-selection, group transforms, snapping, alignment, and distribution

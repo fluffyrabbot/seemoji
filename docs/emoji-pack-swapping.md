@@ -10,6 +10,11 @@
 
 ## Overview
 
+> **Current scene format (2026-09-07):** the editor now normalizes recipes to
+> `DesignDocumentV3`, adding durable named selection groups. V1 and V2 designs
+> migrate through the design codec. The V2 references below describe the original
+> pack rollout; emoji source identities and pinned artwork semantics are unchanged.
+
 > **Persistence baseline (2026-08-28):** the workspace uses canonical autosaved
 > `Project` records in IndexedDB, compare-and-swap revisions, conflict-copy
 > preservation, and cross-tab broadcasts. Pack work extends each project's
