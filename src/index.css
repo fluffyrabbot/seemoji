@@ -668,6 +668,32 @@ input[type='text'], input[type='number'], input:not([type]), select {
   font-size: 1.2rem;
 }
 
+@media (width > 1100px) {
+  :root {
+    --desktop-frame-width: 1440px;
+    --desktop-frame-gutter: clamp(1rem, 3vw, 2rem);
+    --desktop-content-width: calc(var(--desktop-frame-width) - 2 * var(--desktop-frame-gutter));
+  }
+
+  .app-header,
+  .editor-layout,
+  .app-footer {
+    width: 100%;
+    max-width: var(--desktop-frame-width);
+    margin-inline: auto;
+    padding-inline: var(--desktop-frame-gutter);
+  }
+
+  /* Bordered surfaces align with the padded frame's content edges. */
+  .project-bar,
+  .workspace-status-banner,
+  .workspace-recovery-panel {
+    width: calc(100% - 2 * var(--desktop-frame-gutter));
+    max-width: var(--desktop-content-width);
+    margin-inline: auto;
+  }
+}
+
 @media (max-width: 1100px) {
   .editor-layout {
     grid-template-areas: "preview preview" "picker controls";
