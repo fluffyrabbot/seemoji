@@ -168,10 +168,11 @@ export default function Controls({
             { ...transform, scaleX: 1.2, scaleY: 0.8 },
             appearance,
           )}>Squish</button>
-          <button type="button" onClick={() => onApplyStyle(
-            transform,
-            { ...appearance, saturation: 1.5, brightness: 1.08 },
-          )}>Vivid</button>
+          <button type="button" title="Rotate 180°" onClick={() =>
+            setTransform('rotate', transform.rotate <= 0
+              ? transform.rotate + 180
+              : transform.rotate - 180)
+          }>Flip</button>
           <button type="button" onClick={() => onApplyStyle(
             transform,
             { ...appearance, outline: { width: 0.025, color: '#ffffff' } },

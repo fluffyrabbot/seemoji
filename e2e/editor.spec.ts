@@ -303,6 +303,40 @@ test('does not apply delayed emoji validation over a same-project remote design'
   await second.close();
 });
 
+test('Flip rotates a half-turn without changing appearance or mirror settings', async ({ page }) => {
+  const rotation = page.getByRole('spinbutton', { name: 'Rotate', exact: true });
+  const saturation = page.getByRole('spinbutton', { name: 'Saturation', exact: true });
+  const flip = page.getByRole('button', { name: 'Flip', exact: true });
+  await expect(page.getByRole('button', { name: 'Vivid', exact: true })).toHaveCount(0);
+  await saturation.fill('1.25');
+  await page.getByText('Advanced transforms').click();
+  await page.getByLabel('Flip vertically', { exact: true }).check();
+  await rotation.fill('37');
+  await flip.click();
+  await expect(rotation).toHaveValue('-143');
+  await expect(saturation).toHaveValue('1.25');
+  await expect(page.getByLabel('Flip vertically', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Flip horizontally', { exact: true })).not.toBeChecked();
+  await page.getByRole('button', { name: 'Undo', exact: false }).click();
+  await expect(rotation).toHaveValue('37');
+  await page.getByRole('button', { name: 'Redo', exact: false }).click();
+  await expect(rotation).toHaveValue('-143');
+  await flip.click();
+  await expect(rotation).toHaveValue('37');
+
+  for (const [initial, opposite] of [[0, 180], [180, 0], [-180, 0], [-37, 143]]) {
+    await rotation.fill(String(initial));
+    await flip.click();
+    await expect(rotation).toHaveValue(String(opposite));
+  }
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('label[for="adjust-tab"]').click();
+  await flip.click();
+  await expect(rotation).toHaveValue('-37');
+});
+
 test('maximum transforms and effects remain inside every export', async ({ page }) => {
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('137');
   await page.getByText('Advanced transforms').click();
