@@ -1749,10 +1749,29 @@ test('mirrored group rotation matches inspector, canvas handles, and exported pi
   const handle = (await page.locator('.rotate-handle').boundingBox())!;
   const start = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
   const pivot = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.4 };
+  // Observe the real input delivered by the browser. Linux WebKit rounds mouse
+  // coordinates to CSS pixels; at this handle radius that can exceed half a degree.
+  await stage.evaluate((element) => {
+    for (const type of ['pointerdown', 'pointermove']) element.addEventListener(type, (event) => {
+      const pointer = event as PointerEvent;
+      if (!pointer.buttons) return;
+      const bounds = element.getBoundingClientRect();
+      element.setAttribute(`data-test-${type}`, JSON.stringify({
+        x: (pointer.clientX - bounds.left) / bounds.width,
+        y: (pointer.clientY - bounds.top) / bounds.height,
+      }));
+    }, { capture: true });
+  });
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
-  await page.mouse.move(pivot.x - (start.y - pivot.y), pivot.y + (start.x - pivot.x), { steps: 8 });
+  await page.mouse.move(pivot.x - (start.y - pivot.y) * box.width / box.height,
+    pivot.y + (start.x - pivot.x) * box.height / box.width, { steps: 8 });
   await page.mouse.up();
+  const delivered = await stage.evaluate((element) => ['pointerdown', 'pointermove'].map((type) =>
+    JSON.parse(element.getAttribute(`data-test-${type}`)!) as { x: number; y: number }));
+  const deliveredAngle = (Math.atan2(delivered[1]!.y - 0.4, delivered[1]!.x - 0.5)
+    - Math.atan2(delivered[0]!.y - 0.4, delivered[0]!.x - 0.5)) * 180 / Math.PI;
+  expect(Math.abs(deliveredAngle - 90)).toBeLessThan(2);
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect(await pngSamples(page, points)).toEqual(expected);
   const dragged = await exportProject(page);
@@ -1760,7 +1779,7 @@ test('mirrored group rotation matches inspector, canvas handles, and exported pi
     const actual = dragged.design.layers.find(({ id }) => id === layer.id)!.transform;
     expect(actual.x).toBeCloseTo(layer.transform.x, 2);
     expect(actual.y).toBeCloseTo(layer.transform.y, 2);
-    expect(actual.rotate).toBeCloseTo(layer.transform.rotate, 0);
+    expect(actual.rotate).toBeCloseTo(layer.transform.flipH ? -deliveredAngle : deliveredAngle, 4);
   }
 });
 
