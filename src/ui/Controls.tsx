@@ -270,16 +270,18 @@ function SelectionControls({
         <p className="preset-description">Preview your emoji, then apply a style. Each click is one undo.</p>
       </fieldset>}
 
-      {emoji && <details className="saved-styles-details" onToggle={(event) => {
+      <details className="saved-styles-details" onToggle={(event) => {
         if (event.currentTarget.open && !Styles) void loadStyles();
       }}>
         <summary>Saved styles</summary>
-        {Styles ? <Styles loadLibrary={emojiStyles} selectedLayer={emoji}
-          onApply={(transform, appearance) => onApplyStyle(emoji.id, transform, appearance)} />
+        {Styles ? <Styles loadLibrary={emojiStyles} selectedLayer={emoji ?? null}
+          onApply={(transform, appearance) => {
+            if (emoji) onApplyStyle(emoji.id, transform, appearance);
+          }} />
           : stylesFailed ? <p role="alert">Couldn’t load saved styles. <button type="button"
             onClick={() => void loadStyles()}>Try again</button></p>
             : <p role="status">Loading saved styles…</p>}
-      </details>}
+      </details>
 
       {single?.kind === 'text' && <div className="inspector-object-fields">
         <label><span>Text</span><input type="text" maxLength={500} value={single.text}

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -61,6 +62,8 @@ interface Props {
   readonly packs: readonly PackSummary[];
   readonly proportionsLocked: boolean;
   readonly selectedLayerIds: readonly string[];
+  readonly editingGroupId: string | null;
+  readonly onFinishGroupEdit: () => void;
   readonly tool: EditorTool;
   readonly brush: BrushSettings;
   readonly canvasSettings: CanvasSettings;
@@ -148,6 +151,8 @@ export default function Preview({
   packs,
   proportionsLocked,
   selectedLayerIds,
+  editingGroupId,
+  onFinishGroupEdit,
   tool,
   brush,
   canvasSettings,
@@ -172,10 +177,23 @@ export default function Preview({
   const gesture = useRef<Gesture | null>(null);
   const draftRef = useRef<DraftStroke | null>(null);
   const marqueeRef = useRef<Marquee | null>(null);
+  const gestureScope = useRef(editingGroupId);
   const [draft, setDraft] = useState<DraftStroke | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [snapGuides, setSnapGuides] = useState<{ readonly x?: number; readonly y?: number }>({});
   const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
+  useLayoutEffect(() => {
+    if (gestureScope.current === editingGroupId) return;
+    gestureScope.current = editingGroupId;
+    const wasTransforming = gesture.current !== null;
+    gesture.current = null;
+    draftRef.current = null;
+    marqueeRef.current = null;
+    setDraft(null);
+    setMarquee(null);
+    setSnapGuides({});
+    if (wasTransforming) onTransformCommit();
+  }, [editingGroupId, onTransformCommit]);
   const [showOriginal, setShowOriginal] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const lightPreviewRef = useRef<HTMLCanvasElement>(null);
@@ -223,6 +241,7 @@ export default function Preview({
     && candidate.visible
     && packs.find((pack) => pack.id === candidate.source.pack)?.license.shareAlike === true);
   const selectedLayers = design.layers.filter((candidate) => selectedLayerIds.includes(candidate.id));
+  const editingGroup = design.groups.find((group) => group.id === editingGroupId);
   const selectedLayer = selectedLayers.length === 1 ? selectedLayers[0] : undefined;
   const drawingLayer = tool === 'eraser' || tool === 'restore'
     ? selectedLayer
@@ -371,13 +390,15 @@ export default function Preview({
       if (!point || !stageRef.current) return;
       const hit = hitTestLayers(design.layers, point);
       if (hit) {
-        const unit = expandGroupSelection(design, [hit.id]);
+        const unit = expandGroupSelection(design, [hit.id], editingGroupId);
         const next = event.shiftKey
           ? unit.every((id) => selectedLayerIds.includes(id))
             ? selectedLayerIds.filter((id) => !unit.includes(id))
             : [...selectedLayerIds, ...unit]
           : selectedLayerIds.includes(hit.id) ? selectedLayerIds : [hit.id];
         const selected = onSelectionChange(next);
+        gestureScope.current = editingGroup && selected.every((id) => editingGroup.layerIds.includes(id))
+          ? editingGroup.id : null;
         if (!event.shiftKey && selected.length > 0) {
           event.preventDefault();
           stageRef.current.focus({ preventScroll: true });
@@ -588,6 +609,7 @@ export default function Preview({
       const top = Math.min(activeMarquee.start.y, activeMarquee.current.y);
       const bottom = Math.max(activeMarquee.start.y, activeMarquee.current.y);
       const found = design.layers.filter((candidate) => candidate.visible
+        && (!editingGroup || editingGroup.layerIds.includes(candidate.id))
         && boundsIntersect({ left, top, right, bottom }, layerWorldBounds(candidate))).map((candidate) => candidate.id);
       onSelectionChange(activeMarquee.additive ? [...new Set([...selectedLayerIds, ...found])] : found);
       marqueeRef.current = null;
@@ -750,13 +772,20 @@ export default function Preview({
       </div>
 
       <div className="canvas-quick-actions">
-        <button type="button" onClick={onChooseEmoji}>Change emoji</button>
-        <button type="button" onClick={onAddText}>Add text</button>
-        <button type="button" aria-expanded={toolsOpen || tool !== 'select'}
-          aria-controls="drawing-tools" onClick={() => {
-            if (tool !== 'select') onToolChange('select');
-            setToolsOpen(!(toolsOpen || tool !== 'select'));
-          }}>Draw &amp; erase</button>
+        {editingGroup ? <div className="group-edit-banner" role="status">
+          <strong title={`Editing group “${editingGroup.name}”`}>Editing group “{editingGroup.name}”</strong>
+          <span className="sr-only">Select individual members. Escape returns to the group.</span>
+          <button type="button" aria-label="Done editing group" title="Finish editing group (Escape)"
+            onClick={onFinishGroupEdit}>Done</button>
+        </div> : <>
+          <button type="button" onClick={onChooseEmoji}>Change emoji</button>
+          <button type="button" onClick={onAddText}>Add text</button>
+          <button type="button" aria-expanded={toolsOpen || tool !== 'select'}
+            aria-controls="drawing-tools" onClick={() => {
+              if (tool !== 'select') onToolChange('select');
+              setToolsOpen(!(toolsOpen || tool !== 'select'));
+            }}>Draw &amp; erase</button>
+        </>}
       </div>
       <div className="paint-toolbar" id="drawing-tools" aria-label="Canvas tools"
         hidden={!toolsOpen && tool === 'select'}>

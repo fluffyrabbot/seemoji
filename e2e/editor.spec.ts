@@ -1864,3 +1864,284 @@ test('keeps named groups through history, reload, duplication, and project impor
   await page.getByRole('button', { name: /Undo/ }).click();
   expect((await exportProject(page)).design.groups).toEqual(named.design.groups);
 });
+
+const createBadgeGroup = async (page: Page) => {
+  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-15');
+  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await moreControls(page);
+  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('15');
+  await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Group', exact: true }).click();
+  await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
+  await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
+};
+
+test('edits one group member with undo and preserves group identity through reload', async ({ page }) => {
+  await createBadgeGroup(page);
+  const before = await exportProject(page);
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toBeVisible();
+  await page.locator('.layer-select').filter({ hasText: 'Ellipse' }).click();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('37');
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).blur();
+  const edited = await exportProject(page);
+  expect(edited.design.groups).toEqual(before.design.groups);
+  expect(edited.design.layers.find(({ name }) => name === 'Ellipse')!.transform.rotate).toBe(37);
+  for (const layer of before.design.layers.filter(({ name }) => name !== 'Ellipse')) {
+    expect(edited.design.layers.find(({ id }) => id === layer.id)).toEqual(layer);
+  }
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before.design);
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toBeVisible();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await page.getByRole('button', { name: /Redo/ }).click();
+  expect((await exportProject(page)).design).toEqual(edited.design);
+  await page.getByRole('button', { name: 'Move “Ellipse” backward', exact: true }).click();
+  const reordered = await exportProject(page);
+  expect(reordered.design.groups).toEqual(before.design.groups);
+  expect(reordered.design.layers.map(({ name }) => name)).toEqual(['Emoji', 'Ellipse', 'Rectangle']);
+  await page.getByRole('button', { name: 'Done editing group', exact: true }).click();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  expect((await exportProject(page)).design).toEqual(reordered.design);
+});
+
+test('scopes canvas and keyboard selection while editing a group and recovers deleted membership', async ({ page }) => {
+  await createBadgeGroup(page);
+  const before = await exportProject(page);
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  const box = (await stage.boundingBox())!;
+  await stage.click({ position: { x: box.width * 0.82, y: box.height * 0.5 } });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await expect(page.locator('.layer-item.selected .layer-select')).toContainText('Ellipse');
+  await stage.click({ position: { x: box.width * 0.18, y: box.height * 0.5 }, modifiers: ['Shift'] });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await stage.click({ position: { x: box.width * 0.82, y: box.height * 0.5 }, modifiers: ['Shift'] });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await expect(page.locator('.layer-item.selected .layer-select')).toContainText('Rectangle');
+  await stage.click({ position: { x: box.width * 0.03, y: box.height * 0.03 } });
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toBeVisible();
+  await stage.focus();
+  await page.keyboard.press('ControlOrMeta+a');
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  await page.locator('.layer-select').filter({ hasText: 'Emoji' }).click();
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  await page.locator('.layer-select').filter({ hasText: 'Ellipse' }).click();
+  await stage.focus();
+  await page.keyboard.press('Delete');
+  expect((await exportProject(page)).design.groups).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before.design);
+  await page.locator('.layer-select').filter({ hasText: 'Ellipse' }).click();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(2);
+});
+
+interface TestStyleBackup {
+  readonly format: string;
+  readonly version: number;
+  readonly exportedAt: number;
+  readonly styles: readonly {
+    readonly id: string; readonly name: string;
+    readonly transform: Record<string, number | boolean>;
+    readonly appearance: Record<string, unknown>;
+  }[];
+  readonly omissions: readonly { readonly id: string | null; readonly error: string }[];
+}
+const saveNamedStyle = async (page: Page, name: string) => {
+  await openDetails(page, '.saved-styles-details');
+  await page.getByRole('textbox', { name: 'Style name', exact: true }).fill(name);
+  await page.getByRole('button', { name: 'Save style', exact: true }).click();
+  await expect(page.getByRole('button', { name: `Apply ${name}`, exact: true })).toBeVisible();
+};
+const exportStyles = async (page: Page): Promise<TestStyleBackup> => {
+  await openDetails(page, '.saved-styles-details');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export styles', exact: true }).click();
+  const path = await (await pending).path();
+  if (!path) throw new Error('Style backup download has no path');
+  return JSON.parse(await readFile(path, 'utf8')) as TestStyleBackup;
+};
+const chooseStyleBackup = async (page: Page, backup: unknown) => {
+  await page.getByLabel('Import styles', { exact: true }).setInputFiles({
+    name: 'styles.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)),
+  });
+};
+
+test('backs up and restores styles without an emoji selection and previews duplicate names', async ({ page }) => {
+  await page.getByRole('button', { name: 'Tilt', exact: true }).click();
+  await page.getByRole('button', { name: 'Sticker', exact: true }).click();
+  await saveNamedStyle(page, 'Badge');
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await stage.focus();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  const original = await exportStyles(page);
+  expect(original).toMatchObject({ format: 'seemoji-styles', version: 1, omissions: [] });
+  expect(original.styles.map(({ name }) => name)).toEqual(['Badge']);
+  await expect(page.getByRole('textbox', { name: 'Style name', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Delete Badge', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply Badge', exact: true })).toHaveCount(0);
+  await chooseStyleBackup(page, original);
+  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('Badge');
+  await expect(page.getByRole('button', { name: 'Apply Badge', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  const restored = await exportStyles(page);
+  expect(restored.styles).toHaveLength(1);
+  expect(restored.styles[0]!.id).not.toBe(original.styles[0]!.id);
+  expect(restored.styles[0]!.transform).toEqual(original.styles[0]!.transform);
+  expect(restored.styles[0]!.appearance).toEqual(original.styles[0]!.appearance);
+  await chooseStyleBackup(page, original);
+  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('Badge (2)');
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
+  expect((await exportStyles(page)).styles).toHaveLength(1);
+  await chooseStyleBackup(page, original);
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply Badge (2)', exact: true })).toBeVisible();
+  const mixed = { ...original, styles: [...original.styles,
+    { ...original.styles[0]!, id: 'incoming-new-look', name: 'New look' }] };
+  await chooseStyleBackup(page, mixed);
+  await page.getByRole('combobox', { name: 'Duplicate names', exact: true }).selectOption({ label: 'Skip matching names' });
+  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('New look');
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  const merged = await exportStyles(page);
+  expect(merged.styles.map(({ name }) => name).sort()).toEqual(['Badge', 'Badge (2)', 'New look']);
+  expect(new Set(merged.styles.map(({ id }) => id)).size).toBe(3);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await exportStyles(page)).styles).toEqual(merged.styles);
+});
+
+test('invalid style backups clear the previous import preview and never partially import', async ({ page }) => {
+  await saveNamedStyle(page, 'Original');
+  const backup = await exportStyles(page);
+  const incoming = { ...backup, styles: [{ ...backup.styles[0]!, id: 'valid-incoming', name: 'Incoming' }] };
+  await chooseStyleBackup(page, incoming);
+  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
+  await chooseStyleBackup(page, { ...incoming, styles: [...incoming.styles,
+    { ...incoming.styles[0]!, id: 'broken-incoming', name: 'Broken', transform: { ...incoming.styles[0]!.transform, scaleX: 0 } }] });
+  await expect(page.getByRole('alert').filter({ hasText: /scaleX|range/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toHaveCount(0);
+  expect((await exportStyles(page)).styles).toEqual(backup.styles);
+  await page.getByLabel('Import styles', { exact: true }).setInputFiles({
+    name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{not-json'),
+  });
+  await expect(page.getByRole('alert').filter({ hasText: /JSON/i })).toBeVisible();
+  expect((await exportStyles(page)).styles).toEqual(backup.styles);
+  await chooseStyleBackup(page, incoming);
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  expect((await exportStyles(page)).styles.map(({ name }) => name).sort()).toEqual(['Incoming', 'Original']);
+});
+
+test('requires a new style import preview after another tab changes the library', async ({ page, context }) => {
+  await saveNamedStyle(page, 'Badge');
+  const backup = await exportStyles(page);
+  await chooseStyleBackup(page, backup);
+  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
+  const second = await context.newPage();
+  await mockArtwork(second);
+  await second.goto('/');
+  await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await saveNamedStyle(second, 'From another tab');
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /changed|preview/i }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply Badge (2)', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh import preview', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  const restored = await exportStyles(page);
+  expect(restored.styles.map(({ name }) => name).sort()).toEqual(['Badge', 'Badge (2)', 'From another tab']);
+  await second.close();
+});
+
+for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside-object drag exits group editing (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+  await createBadgeGroup(page);
+  const before = await exportProject(page);
+  await page.locator('.canvas-settings summary').click();
+  await page.getByRole('checkbox', { name: 'Snap', exact: true }).uncheck();
+  await page.locator('.canvas-settings summary').click();
+  if (mobile) {
+    await page.setViewportSize({ width: 414, height: 896 });
+    await page.getByRole('button', { name: 'Objects', exact: true }).click();
+  }
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  const documentFrame = () => stage.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x + window.scrollX, y: box.y + window.scrollY, width: box.width, height: box.height };
+  });
+  const normalFrame = await documentFrame();
+  await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
+  expect(await documentFrame()).toEqual(normalFrame);
+  await stage.scrollIntoViewIfNeeded();
+  const editingBox = (await stage.boundingBox())!;
+  // The emoji is outside the group and visible above both shape members.
+  const x = Math.round(editingBox.x + editingBox.width * 0.5);
+  const y = Math.round(editingBox.y + editingBox.height * 0.2);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
+  expect(await stage.boundingBox()).toEqual(editingBox);
+  await page.mouse.move(x + 1, y + 1);
+  await page.mouse.up();
+  const after = await exportProject(page);
+  const original = before.design.layers.find(({ name }) => name === 'Emoji')!;
+  const moved = after.design.layers.find(({ id }) => id === original.id)!;
+  expect(moved.transform.x - original.transform.x).toBeCloseTo(1 / editingBox.width, 3);
+  expect(moved.transform.y - original.transform.y).toBeCloseTo(1 / editingBox.height, 3);
+  expect(after.design.groups).toEqual(before.design.groups);
+  for (const layer of before.design.layers.filter(({ id }) => id !== original.id)) {
+    expect(after.design.layers.find(({ id }) => id === layer.id)).toEqual(layer);
+  }
+});
+
+test('recovers an unreadable style with an invalid identity before retrying import', async ({ page }) => {
+  await saveNamedStyle(page, 'Original');
+  const backup = await exportStyles(page);
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open('seemoji-styles');
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('styles', 'readwrite');
+        transaction.objectStore('styles').add({ id: 123, name: 'Unreadable' });
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = () => reject(transaction.error);
+      });
+    } finally { database.close(); }
+  });
+  await page.getByRole('button', { name: 'Refresh styles', exact: true }).click();
+  const recoveredBackup = await exportStyles(page);
+  expect(recoveredBackup.styles).toEqual(backup.styles);
+  expect(recoveredBackup.omissions).toEqual([{ id: null, error: expect.any(String) }]);
+  await chooseStyleBackup(page, backup);
+  await expect(page.getByRole('alert').filter({ hasText: /unreadable/i }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /Delete unreadable style/ }).click();
+  await expect(page.getByRole('button', { name: /Delete unreadable style/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh import preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
+  const restored = await exportStyles(page);
+  expect(restored.omissions).toEqual([]);
+  expect(restored.styles.map(({ name }) => name).sort()).toEqual(['Original', 'Original (2)']);
+  expect(restored.styles.find(({ name }) => name === 'Original')).toEqual(backup.styles[0]);
+});

@@ -39,8 +39,8 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-190,000 raw bytes and 58,500 gzip-9 bytes) and all deferred or otherwise
-unreachable chunks (at most 23,000 raw bytes and 9,300 gzip-9 bytes). It also
+193,000 raw bytes and 59,000 gzip-9 bytes) and all deferred or otherwise
+unreachable chunks (at most 38,000 raw bytes and 13,800 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 the full emoji search catalog, and saved-style storage loaded only on interaction. See
 [JavaScript bundle budget](docs/bundle-budget.md) for the graph classification,
@@ -134,6 +134,10 @@ Unknown document versions are rejected. V1 recipes and V2 scenes have explicit o
 migrations into the current scene model. Groups retain their identity through history,
 autosave, project export, and workspace archives. Their non-overlapping membership
 organizes selection without changing layer paint order.
+**Edit members** enters a temporary group editing mode: select, reshape, restyle,
+or reorder an individual member while preserving the group. **Done** or Escape
+returns to selecting the whole group. Member edits are undoable; the editing mode
+itself is not persisted in project files or restored across project loads.
 
 The editor coalesces pointer and slider gestures into bounded undo history.
 Position is stored in output-relative coordinates, so direct canvas movement is
@@ -181,8 +185,14 @@ selection, preserving spacing and mirror behavior at the editable position limit
 The inspector's **Saved styles** library stores named emoji transforms and effects
 in a separate IndexedDB capability. Applying a style preserves the selected emoji's
 position, artwork, identity, and masks, and is one undoable edit. The library loads
-only when opened; project backups contain project designs, while the style library
-remains local to this browser.
+only when opened. **Export styles** creates a portable JSON backup independently
+of the active selection. **Import styles** validates the complete file and previews
+incoming names before any write. Keep both gives incoming duplicates unique names;
+Skip matching names retains the existing entries. Confirmation inserts fresh
+identities in one transaction against the previewed library snapshot, so a
+concurrent edit requires a new preview and a failed import cannot partially restore.
+Backups explicitly report unreadable records that were omitted. Project and style
+backups remain separate, and imports leave existing styles intact.
 
 Artwork comes from eight write-once snapshots published at
 `fluffyrabbot/seemoji-packs`: Twemoji, Noto Emoji, Fluent Emoji Color/Flat/High Contrast,
@@ -216,6 +226,8 @@ surprise file download.
 - Layer selection, transforms, rename, duplicate, opacity, ordering, visibility, and deletion
 - Rectangle, ellipse, line, text, and tolerance-aware flood-fill layers
 - Shift-click and marquee multi-selection, group transforms, snapping, alignment, and distribution
+- Individual group member editing with persistent group identity and undo
+- Portable saved-style backups with duplicate-name previews and atomic restoration
 - Named autosaved IndexedDB projects, atomic multi-tab conflict resolution, starred quick access, template duplication, strict JSON import/export, and workspace archives
 - Visual history navigation and keyboard shortcuts for tools, selection, duplication, grouping, and deletion
 - Internal layer copy/paste with duplicate-at-offset behavior

@@ -82,10 +82,24 @@ flat and non-overlapping. Groups preserve each member's own transform, mask,
 opacity, and paint order.
 
 **Group** creates a saved group from the selection. **Saved groups** in Objects
-allows selecting, renaming, and ungrouping it. Selecting or Shift-toggling any
-member acts on the whole group, including after a project opens. Grouping,
+allows selecting, renaming, editing members, and ungrouping it. Selecting or
+Shift-toggling any member normally acts on the whole group, including after a project opens. Grouping,
 renaming, regrouping, and ungrouping participate in normal undo/redo and autosave.
 Regrouping existing groups combines their complete memberships.
+
+**Edit members** enters a temporary selection scope for a saved group. The canvas
+shows its name and a **Done** button while preserving the full scene. Canvas clicks,
+Shift-selection, marquee selection, and the Objects list can select individual
+members; `Cmd/Ctrl+A` selects only that group's members. Source, style, transform,
+and layer-property changes affect those selected members and keep their group.
+Clicking blank canvas clears the selection within the group; selecting an outside
+object exits member editing. **Done** or `Escape` selects the complete group again.
+
+Member editing does not create an undo step or enter saved project data. Undo/redo
+retains the scope while that group exists, and exits if a history change dissolves
+or removes it. Reopening or switching projects starts with normal group selection.
+Adding, pasting, or duplicating objects exits member editing and selects the new
+independent objects; a copied complete group still retains its copied membership.
 
 Project reload, editable export/import, workspace archives, and project copies
 retain groups. Duplicating or pasting a complete group assigns fresh group and
@@ -125,6 +139,26 @@ while preserving position; Squish preserves size while changing aspect; Tilt set
 angle; Sticker adds a white edge. Styles can be reapplied without accumulating distortion.
 Detailed properties load only after **More editing controls** opens.
 
+**Saved styles** opens a separate browser library of up to 64 named emoji looks.
+Saving and applying a look requires one selected emoji; backing up or importing
+the library is available with any selection. **Export styles** downloads a
+`seemoji-styles` version 1 JSON backup with every readable style and an explicit
+report of unreadable records that were omitted. Those records remain in browser
+storage until explicitly removed. **Delete unreadable style** also works when
+the stored identity is invalid. It checks the observed record again in the deletion
+transaction; if another tab repaired or replaced it, nothing is deleted and the
+library refreshes for review.
+
+**Import styles** validates the entire file before showing the proposed names and
+counts. **Keep both (rename)** assigns available numbered names; **Skip matching
+names** excludes duplicates, using the same Unicode-normalized name comparison
+as saving. Cancel writes nothing. Confirm assigns fresh identities and adds the
+whole batch in one transaction. Invalid data, capacity limits, write errors, or a
+library changed by another tab cannot partially import; refresh the preview after
+resolving the reported problem. Backups are limited to 256 KiB. Style backups and
+project/workspace archives are separate so reusable looks travel independently
+of individual designs.
+
 On phones, **Emoji**, **Objects**, and **Edit** switch the independently scrolling lower
 panel while the canvas and Copy/Download actions remain in view. **Projects** opens local
 project actions. **Add text** selects the new text and opens Edit; **Change emoji** opens and
@@ -138,13 +172,13 @@ backgrounds; it does not change the chosen PNG export resolution.
 | Select, brush, erase, fill, pan | `V`, `B`, `E`, `F`, `H` |
 | Restore mask | `Shift+E` |
 | Rectangle, ellipse, line, text | `R`, `O`, `L`, `T` |
-| Select all layers | `Cmd/Ctrl+A` |
+| Select all layers (group members while editing a group) | `Cmd/Ctrl+A` |
 | Copy, paste, duplicate | `Cmd/Ctrl+C`, `Cmd/Ctrl+V`, `Cmd/Ctrl+D` |
 | Group / ungroup selection | `Cmd/Ctrl+G`, `Shift+Cmd/Ctrl+G` |
 | Flush project autosave | `Cmd/Ctrl+S` |
 | Undo / redo | `Cmd/Ctrl+Z`, `Shift+Cmd/Ctrl+Z` |
 | Delete selection | `Backspace` or `Delete` |
-| Deselect and return to Select | `Escape` |
+| Finish editing a group, otherwise deselect and return to Select | `Escape` |
 | Temporarily pan the canvas | Hold `Space` and drag |
 
 Tool shortcuts are ignored while typing in an input, textarea, selector, or

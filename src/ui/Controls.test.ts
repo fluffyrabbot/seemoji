@@ -69,6 +69,18 @@ describe('selection-aware Controls', () => {
     expect(container.textContent).toContain('Select an object');
   });
 
+  it.each([[], [textLayer.id], [DEFAULT_EMOJI_LAYER.id, textLayer.id]].map((selectedLayerIds) => ({ selectedLayerIds })))(
+    'opens the backup library without requiring a single emoji selection: $selectedLayerIds', async ({ selectedLayerIds }) => {
+      const { container, props } = await setup({ selectedLayerIds });
+      const disclosure = container.querySelector<HTMLDetailsElement>('.saved-styles-details')!;
+      expect(disclosure).not.toBeNull();
+      disclosure.open = true;
+      disclosure.dispatchEvent(new Event('toggle'));
+      await vi.waitFor(() => expect(props.emojiStyles).toHaveBeenCalled());
+      expect(props.onApplyStyle).not.toHaveBeenCalled();
+    },
+  );
+
   it('loads exact controls only after disclosure and keeps their updates on the selected object', async () => {
     const { container, props } = await setup();
     expect(container.querySelector('input[aria-label="Position X slider"]')).toBeNull();

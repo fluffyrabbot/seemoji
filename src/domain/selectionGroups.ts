@@ -27,9 +27,14 @@ export function selectionGroupError(
   return null;
 }
 
-export function expandGroupSelection(design: DesignDocument, ids: readonly string[]): readonly string[] {
+export function expandGroupSelection(
+  design: DesignDocument,
+  ids: readonly string[],
+  editingGroupId: string | null = null,
+): readonly string[] {
   const existing = new Set(design.layers.map((layer) => layer.id));
-  const membership = new Map(design.groups.flatMap((group) => group.layerIds.map((id) => [id, group.layerIds] as const)));
+  const membership = new Map(design.groups.filter((group) => group.id !== editingGroupId)
+    .flatMap((group) => group.layerIds.map((id) => [id, group.layerIds] as const)));
   return [...new Set(ids.filter((id) => existing.has(id)).flatMap((id) => membership.get(id) ?? [id]))];
 }
 

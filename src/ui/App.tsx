@@ -520,7 +520,8 @@ export default function App({ services, experiments }: Props) {
   };
 
   const selectAllLayers = () => dispatch({ type: 'select-layers',
-    layerIds: editor.design.layers.map((layer) => layer.id) });
+    layerIds: editor.design.groups.find((group) => group.id === editor.editingGroupId)?.layerIds
+      ?? editor.design.layers.map((layer) => layer.id) });
   const deleteSelectedLayers = () => dispatch({ type: 'remove-layers', layerIds: editor.selectedLayerIds });
 
   const updateSelectedLayout = (
@@ -598,7 +599,9 @@ export default function App({ services, experiments }: Props) {
       if (command && key === 's') { event.preventDefault(); void shortcutActions.current.saveNow(); return; }
       if (editing) return;
       if (event.key === 'Escape') {
-        event.preventDefault(); dispatch({ type: 'select-layers', layerIds: [] }); setTool('select'); return;
+        event.preventDefault();
+        dispatch(editor.editingGroupId === null ? { type: 'select-layers', layerIds: [] } : { type: 'finish-group-edit' });
+        setTool('select'); return;
       }
       if (command && key === 'z') { event.preventDefault(); dispatch({ type: event.shiftKey ? 'redo' : 'undo' }); return; }
       if (command && key === 'a') { event.preventDefault(); shortcutActions.current.selectAllLayers(); return; }
@@ -688,9 +691,14 @@ export default function App({ services, experiments }: Props) {
       ungroupSelection,
     },
     groups: {
-      select: (groupId) => {
-        const group = editor.design.groups.find((candidate) => candidate.id === groupId);
-        if (group) dispatchForEditorSession(session.editorSessionEpoch, { type: 'select-layers', layerIds: group.layerIds });
+      select: (groupId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'select-group', groupId }),
+      edit: (groupId) => {
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'begin-group-edit', groupId });
+        setTool('select');
+      },
+      finishEditing: () => {
+        dispatchForEditorSession(session.editorSessionEpoch, { type: 'finish-group-edit' });
+        setTool('select');
       },
       rename: (groupId, name) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'rename-group', groupId, name }),
       ungroup: (groupId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'remove-groups', groupIds: [groupId] }),

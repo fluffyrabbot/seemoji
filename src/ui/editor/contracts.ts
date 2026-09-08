@@ -181,6 +181,8 @@ export interface EditorPageCommands {
   };
   readonly groups: {
     readonly select: (groupId: string) => void;
+    readonly edit: (groupId: string) => void;
+    readonly finishEditing: () => void;
     readonly rename: (groupId: string, name: string) => void;
     readonly ungroup: (groupId: string) => void;
   };

@@ -155,6 +155,7 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             <LayersPanel
               design={model.editor.design}
               selectedLayerIds={model.editor.selectedLayerIds}
+              editingGroupId={model.editor.editingGroupId}
               onSelect={commands.layers.select}
               onToggle={commands.layers.toggleVisibility}
               onMove={commands.layers.move}
@@ -169,6 +170,7 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               onGroup={commands.layers.groupSelection}
               onUngroup={commands.layers.ungroupSelection}
               onSelectGroup={commands.groups.select}
+              onEditGroup={commands.groups.edit}
               onRenameGroup={commands.groups.rename}
               onUngroupGroup={commands.groups.ungroup}
             />
@@ -192,6 +194,8 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             packs={model.packs.packs}
             proportionsLocked={model.proportionsLocked}
             selectedLayerIds={model.editor.selectedLayerIds}
+            editingGroupId={model.editor.editingGroupId}
+            onFinishGroupEdit={commands.groups.finishEditing}
             tool={model.tool}
             brush={model.brush}
             canvasSettings={model.canvasSettings}

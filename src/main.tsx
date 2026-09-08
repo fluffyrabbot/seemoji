@@ -46,7 +46,7 @@ const loadEmojiStyles: AppServices['emojiStyles'] = () => {
     import('./application/emojiStyleLibrary'),
     import('./adapters/browser/indexedDbEmojiStyleRepository'),
   ]).then(([{ EmojiStyleLibrary }, { IndexedDbEmojiStyleRepository }]) =>
-    new EmojiStyleLibrary(new IndexedDbEmojiStyleRepository()),
+    new EmojiStyleLibrary(new IndexedDbEmojiStyleRepository(), { fileExport }),
   ).catch((cause: unknown) => { emojiStyles = null; throw cause; });
   return emojiStyles;
 };

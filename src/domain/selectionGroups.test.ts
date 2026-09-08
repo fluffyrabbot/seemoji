@@ -12,6 +12,15 @@ describe('persistent selection groups', () => {
     expect(expandGroupSelection({ ...DEFAULT_DESIGN, layers, groups }, [])).toEqual([]);
   });
 
+  it('expands other groups while treating members of the edited group individually', () => {
+    const scene = { ...DEFAULT_DESIGN,
+      layers: [...layers, { ...DEFAULT_EMOJI_LAYER, id: 'd' }],
+      groups: [...groups, { id: 'group-2', name: 'Caption', layerIds: ['c', 'd'] }] };
+    expect(expandGroupSelection(scene, ['b'], 'group-1')).toEqual(['b']);
+    expect(expandGroupSelection(scene, ['b', 'c'], 'group-1')).toEqual(['b', 'c', 'd']);
+    expect(expandGroupSelection(scene, ['b'], null)).toEqual(['a', 'b']);
+  });
+
   it('copies complete groups with fresh identities and remapped member ids', () => {
     const copied = copySelectionGroups(groups, new Map([['a', 'new-a'], ['b', 'new-b']]),
       new Map([['group-1', 'new-group']]));

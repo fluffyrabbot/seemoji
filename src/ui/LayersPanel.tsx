@@ -3,6 +3,7 @@ import type { DesignDocument } from '../domain/design';
 interface Props {
   readonly design: DesignDocument;
   readonly selectedLayerIds: readonly string[];
+  readonly editingGroupId: string | null;
   readonly onSelect: (id: string, toggle: boolean) => void;
   readonly onToggle: (id: string) => void;
   readonly onMove: (id: string, direction: 'forward' | 'backward') => void;
@@ -17,6 +18,7 @@ interface Props {
   readonly onGroup: () => void;
   readonly onUngroup: () => void;
   readonly onSelectGroup: (groupId: string) => void;
+  readonly onEditGroup: (groupId: string) => void;
   readonly onRenameGroup: (groupId: string, name: string) => void;
   readonly onUngroupGroup: (groupId: string) => void;
 }
@@ -24,6 +26,7 @@ interface Props {
 export default function LayersPanel({
   design,
   selectedLayerIds,
+  editingGroupId,
   onSelect,
   onToggle,
   onMove,
@@ -38,6 +41,7 @@ export default function LayersPanel({
   onGroup,
   onUngroup,
   onSelectGroup,
+  onEditGroup,
   onRenameGroup,
   onUngroupGroup,
 }: Props) {
@@ -82,15 +86,17 @@ export default function LayersPanel({
         <button type="button" onClick={onPaste} title="Paste layers (⌘V)">Paste layers</button>
         <button type="button" disabled={selectedLayerIds.length === 0} onClick={onDuplicateSelection}
           aria-label="Duplicate selection" title="Duplicate with offset (⌘D)">Duplicate</button>
-        <button type="button" disabled={selectedLayerIds.length < 2 || alreadyGrouped} onClick={onGroup} title="Group selection (⌘G)">Group</button>
+        <button type="button" disabled={selectedLayerIds.length < 2 || alreadyGrouped || editingGroupId !== null}
+          onClick={onGroup} title="Group selection (⌘G)">Group</button>
         <button type="button" disabled={selectedGroups.length === 0} onClick={onUngroup} title="Ungroup selection (⇧⌘G)">Ungroup</button>
       </div>
       {design.groups.length > 0 && <section className="selection-groups" aria-label="Saved groups">
         <h3>Saved groups</h3>
-        <p>Select a group to edit its members together.</p>
-        {design.groups.map((group) => <div className="selection-group" key={`${group.id}:${group.name}`}>
+        <p>Select a group to move it together, or edit its members.</p>
+        {design.groups.map((group) => <div className={`selection-group${editingGroupId === group.id ? ' editing' : ''}`}
+          key={`${group.id}:${group.name}`}>
           <button type="button" aria-label={`Select group “${group.name}”`}
-            aria-pressed={group.layerIds.every((id) => selectedLayerIds.includes(id))}
+            aria-pressed={editingGroupId === null && group.layerIds.every((id) => selectedLayerIds.includes(id))}
             onClick={() => onSelectGroup(group.id)}>{group.layerIds.length} objects</button>
           <input aria-label={`Rename group “${group.name}”`} defaultValue={group.name} maxLength={80}
             onBlur={(event) => {
@@ -105,6 +111,8 @@ export default function LayersPanel({
                 event.currentTarget.blur();
               }
             }} />
+          <button type="button" aria-label={`Edit group “${group.name}”`} disabled={editingGroupId === group.id}
+            aria-pressed={editingGroupId === group.id} onClick={() => onEditGroup(group.id)}>Edit members</button>
           <button type="button" aria-label={`Ungroup “${group.name}”`}
             onClick={() => onUngroupGroup(group.id)}>Ungroup</button>
         </div>)}

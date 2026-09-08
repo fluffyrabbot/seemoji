@@ -153,6 +153,46 @@ class GatedProjectRepository implements ProjectRepository {
 }
 
 describe('EditorWorkspaceStore', () => {
+  it('keeps group editing transient while persisting individual member edits across project switches and reload', async () => {
+    const factory = new IDBFactory();
+    const databaseName = 'editor-transient-group-editing';
+    const store = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, databaseName)));
+    await store.load();
+    store.dispatch({ type: 'add-layer', layer: { ...DEFAULT_EMOJI_LAYER, id: 'emoji-2' } });
+    store.dispatch({ type: 'create-group', groupId: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] });
+    await store.flush();
+    const before = store.getSnapshot();
+    const projectId = before.workspace!.activeProject.id;
+
+    store.dispatch({ type: 'begin-group-edit', groupId: 'group-1', layerId: 'emoji-1' });
+    expect(store.getSnapshot().workspace).toBe(before.workspace);
+    expect(store.getSnapshot().editor.past).toBe(before.editor.past);
+    expect(store.persistenceStatus).toBe('saved');
+    store.dispatch({ type: 'update-layer-transform', layerId: 'emoji-1', transform: { ...DEFAULT_TRANSFORM, rotate: 37 } });
+    await store.flush();
+    expect(store.getSnapshot().editor.editingGroupId).toBe('group-1');
+    expect(store.getSnapshot().editor.design.layers.map((layer) => layer.transform.rotate)).toEqual([37, 0]);
+    expect(store.snapshot().activeProject.design).not.toHaveProperty('editingGroupId');
+
+    await store.create();
+    expect(store.getSnapshot().editor.editingGroupId).toBeNull();
+    await store.activate(projectId);
+    expect(store.getSnapshot().editor.editingGroupId).toBeNull();
+    expect(store.getSnapshot().editor.selectedLayerIds).toEqual(['emoji-1', 'emoji-2']);
+    store.dispatch({ type: 'begin-group-edit', groupId: 'group-1', layerId: 'emoji-2' });
+    store.dispose();
+
+    const reopened = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, databaseName)));
+    await reopened.load();
+    expect(reopened.getSnapshot().editor.editingGroupId).toBeNull();
+    expect(reopened.getSnapshot().editor.selectedLayerIds).toEqual(['emoji-1', 'emoji-2']);
+    expect(reopened.getSnapshot().editor.design.layers.map((layer) => layer.transform.rotate)).toEqual([37, 0]);
+    expect(reopened.getSnapshot().editor.design.groups).toEqual([
+      { id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] },
+    ]);
+    reopened.dispose();
+  });
+
   it('persists named groups through reopening and archives, with the first edit targeting every member', async () => {
     const factory = new IDBFactory();
     const databaseName = 'editor-persistent-groups';

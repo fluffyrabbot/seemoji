@@ -7,11 +7,11 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 190,000 | 58,500 |
-| Deferred | 23,000 | 9,300 |
+| Initial | 193,000 | 59,000 |
+| Deferred | 38,000 | 13,800 |
 
 Both limits are independent. Total JavaScript is informational; these gates
-cap it at 213,000 raw bytes and 67,800 gzip-9 bytes. Each emitted asset is
+cap it at 231,000 raw bytes and 72,800 gzip-9 bytes. Each emitted asset is
 compressed independently, matching separately cached transfers. CSS, static
 pack manifests, and externally hosted artwork are outside this JavaScript gate.
 
@@ -89,6 +89,39 @@ The new limits round this measured artifact to 190,000 / 58,500 initial and
 The deferred increase buys a new persistent capability without fetching its
 storage implementation for the quick remix flow. Total measured JavaScript is
 212,008 raw / 67,096 gzip-9 bytes. The limits remain tight regression guards.
+
+## Group member editing and portable style backups
+
+| Artifact (Node 24.13.1) | Initial raw | Initial gzip-9 | Deferred raw | Deferred gzip-9 |
+| --- | ---: | ---: | ---: | ---: |
+| Geometry, groups, and saved styles | 189,527 | 58,039 | 22,481 | 9,057 |
+| Member editing and style backups | 192,130 | 58,723 | 37,526 | 13,637 |
+
+The initial increase is 2,603 raw / 684 gzip-9 bytes. Temporary group scope,
+selection normalization, gesture cancellation, and the stable canvas toolbar
+support direct member editing and preserve group identity through undo and
+project switches. These extend the existing selection and command paths; delaying
+them until a panel opens would leave canvas selection and keyboard behavior
+inconsistent with the current mode.
+
+The deferred increase is 15,045 raw / 4,580 gzip-9 bytes. All style archive code
+remains behind the Saved styles disclosure: strict bounded decoding, duplicate
+name planning, review and confirmation UI, fresh identities, transactional
+snapshot checks, and guarded recovery for unreadable records. The shared archive
+module contains the look codec and import planning once; UI, service, and adapter
+reuse it. Recovery compares the observed stored graph inside the deletion
+transaction so an old recovery action cannot delete a repaired or replaced record.
+
+Neither storage nor archive parsing starts on mount. A narrower backup-only split
+would move bytes between deferred chunks without reducing this deferred total;
+the library must retain its transactional validation and recovery capability.
+The added transfer enables portable, reviewable backups with atomic import and
+an actionable recovery path, while the quick remix flow does not fetch it.
+
+The ceilings round the measured artifact to 193,000 / 59,000 initial and
+38,000 / 13,800 deferred, leaving 870 / 277 initial and 474 / 163 deferred bytes.
+Total measured JavaScript is 229,656 raw / 72,360 gzip-9 bytes. These remain
+measured regression guards rather than speculative capacity allowances.
 
 ## Classification
 

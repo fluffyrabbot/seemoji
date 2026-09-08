@@ -31,6 +31,8 @@ export interface EditorState {
   readonly future: readonly DesignDocument[];
   readonly historyGroup: string | null;
   readonly selectedLayerIds: readonly string[];
+  /** Transient member-selection scope; never serialized with the design. */
+  readonly editingGroupId: string | null;
 }
 
 type GroupedAction = { readonly historyGroup?: string };
@@ -70,6 +72,9 @@ export type EditorAction =
   | { readonly type: 'create-group'; readonly groupId: string; readonly name: string; readonly layerIds: readonly string[] }
   | { readonly type: 'rename-group'; readonly groupId: string; readonly name: string }
   | { readonly type: 'remove-groups'; readonly groupIds: readonly string[] }
+  | { readonly type: 'select-group'; readonly groupId: string }
+  | { readonly type: 'begin-group-edit'; readonly groupId: string; readonly layerId?: string }
+  | { readonly type: 'finish-group-edit' }
   | { readonly type: 'select-layer'; readonly layerId: string; readonly toggle?: boolean }
   | { readonly type: 'select-layers'; readonly layerIds: readonly string[] }
   | { readonly type: 'toggle-layer'; readonly layerId: string }
@@ -89,11 +94,25 @@ export const INITIAL_EDITOR_STATE: EditorState = {
   future: [],
   historyGroup: null,
   selectedLayerIds: [PRIMARY_EMOJI_LAYER_ID],
+  editingGroupId: null,
 };
 
-const validSelection = (design: DesignDocument, ids: readonly string[]): readonly string[] => {
-  return expandGroupSelection(design, ids);
+const validSelection = (design: DesignDocument, ids: readonly string[], editingGroupId: string | null = null): readonly string[] => {
+  return expandGroupSelection(design, ids, editingGroupId);
 };
+
+function normalizeSelection(
+  design: DesignDocument,
+  ids: readonly string[],
+  editingGroupId: string | null,
+): Pick<EditorState, 'selectedLayerIds' | 'editingGroupId'> {
+  const group = design.groups.find((candidate) => candidate.id === editingGroupId);
+  const selectedLayerIds = validSelection(design, ids, group?.id ?? null);
+  // An explicit outside selection exits member mode; empty selection stays inside.
+  return group && selectedLayerIds.every((id) => group.layerIds.includes(id))
+    ? { selectedLayerIds, editingGroupId: group.id }
+    : { selectedLayerIds: validSelection(design, ids), editingGroupId: null };
+}
 
 const reservedId = (design: DesignDocument, id: string): boolean =>
   !!getLayer(design, id) || design.groups.some((group) => group.id === id);
@@ -109,7 +128,7 @@ function recordDesign(
       ...state,
       design,
       future: [],
-      selectedLayerIds: validSelection(design, state.selectedLayerIds),
+      ...normalizeSelection(design, state.selectedLayerIds, state.editingGroupId),
     };
   }
   return {
@@ -118,7 +137,7 @@ function recordDesign(
     past: [...state.past, state.design].slice(-MAX_HISTORY),
     future: [],
     historyGroup: historyGroup ?? null,
-    selectedLayerIds: validSelection(design, state.selectedLayerIds),
+    ...normalizeSelection(design, state.selectedLayerIds, state.editingGroupId),
   };
 }
 
@@ -144,7 +163,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'load-design':
       return hasDesignCapacity(action.design) && !selectionGroupError(action.design.groups, action.design.layers)
         ? { ...state, design: action.design, past: [], future: [], historyGroup: null,
-            selectedLayerIds: validSelection(action.design, [action.design.layers.at(-1)!.id]) }
+            selectedLayerIds: validSelection(action.design, [action.design.layers.at(-1)!.id]), editingGroupId: null }
         : state;
     case 'replace-design':
       return recordCapacityChangingDesign(state, action.design, action.historyGroup);
@@ -220,6 +239,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...recordDesign(state, design),
         selectedLayerIds: [layer.id],
+        editingGroupId: null,
       };
     }
     case 'mask-stroke': {
@@ -246,6 +266,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...recordDesign(state, { ...state.design, layers: [...state.design.layers, layer] }),
         selectedLayerIds: [layer.id],
+        editingGroupId: null,
       };
     }
     case 'add-layer': {
@@ -256,6 +277,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...recordDesign(state, design),
         selectedLayerIds: [action.layer.id],
+        editingGroupId: null,
       };
     }
     case 'insert-layers': {
@@ -268,7 +290,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const design = { ...state.design, layers: [...state.design.layers, ...action.layers],
         groups: [...state.design.groups, ...action.groups] };
       if (!hasDesignCapacity(design) || selectionGroupError(design.groups, design.layers)) return state;
-      return { ...recordDesign(state, design), selectedLayerIds: action.layers.map((layer) => layer.id) };
+      return { ...recordDesign(state, design), selectedLayerIds: action.layers.map((layer) => layer.id), editingGroupId: null };
     }
     case 'update-layer': {
       const current = getLayer(state.design, action.layer.id);
@@ -309,6 +331,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...recordDesign(state, design),
         selectedLayerIds: [duplicate.id],
+        editingGroupId: null,
       };
     }
     case 'duplicate-layers': {
@@ -336,9 +359,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       if (copiedGroups.length !== copyingGroups.length || !hasDesignCapacity(design)
           || selectionGroupError(design.groups, design.layers)) return state;
       return { ...recordDesign(state, design),
-        selectedLayerIds: next.map((copy) => copy.id) };
+        selectedLayerIds: next.map((copy) => copy.id), editingGroupId: null };
     }
     case 'create-group': {
+      if (state.editingGroupId !== null) return state;
       if (reservedId(state.design, action.groupId)) return state;
       const layerIds = validSelection(state.design, action.layerIds);
       if (layerIds.length < 2 || state.design.groups.some((group) =>
@@ -348,7 +372,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         !existing.layerIds.some((id) => layerIds.includes(id))), group];
       const design = { ...state.design, groups };
       if (selectionGroupError(groups, design.layers)) return state;
-      return { ...recordDesign(state, design), selectedLayerIds: layerIds };
+      return { ...recordDesign(state, design), selectedLayerIds: layerIds, editingGroupId: null };
     }
     case 'rename-group': {
       const name = action.name.trim();
@@ -362,17 +386,35 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return groups.length === state.design.groups.length ? state
         : recordDesign(state, { ...state.design, groups });
     }
+    case 'select-group': {
+      const group = state.design.groups.find((candidate) => candidate.id === action.groupId);
+      return group ? { ...state, selectedLayerIds: group.layerIds, editingGroupId: null, historyGroup: null } : state;
+    }
+    case 'begin-group-edit': {
+      const group = state.design.groups.find((candidate) => candidate.id === action.groupId);
+      if (!group || (action.layerId !== undefined && !group.layerIds.includes(action.layerId))) return state;
+      const selected = action.layerId
+        ?? state.selectedLayerIds.find((id) => group.layerIds.includes(id))
+        ?? group.layerIds[0]!;
+      return { ...state, selectedLayerIds: [selected], editingGroupId: group.id, historyGroup: null };
+    }
+    case 'finish-group-edit': {
+      if (state.editingGroupId === null) return state;
+      const group = state.design.groups.find((candidate) => candidate.id === state.editingGroupId);
+      return { ...state, selectedLayerIds: group?.layerIds ?? validSelection(state.design, state.selectedLayerIds),
+        editingGroupId: null, historyGroup: null };
+    }
     case 'select-layer': {
       if (!getLayer(state.design, action.layerId)) return state;
-      const unit = validSelection(state.design, [action.layerId]);
-      if (!action.toggle) return { ...state, selectedLayerIds: unit, historyGroup: null };
+      const unit = validSelection(state.design, [action.layerId], state.editingGroupId);
+      if (!action.toggle) return { ...state, ...normalizeSelection(state.design, unit, state.editingGroupId), historyGroup: null };
       const selected = unit.every((id) => state.selectedLayerIds.includes(id))
         ? state.selectedLayerIds.filter((id) => !unit.includes(id))
         : [...state.selectedLayerIds, ...unit];
-      return { ...state, selectedLayerIds: selected, historyGroup: null };
+      return { ...state, ...normalizeSelection(state.design, selected, state.editingGroupId), historyGroup: null };
     }
     case 'select-layers':
-      return { ...state, selectedLayerIds: validSelection(state.design, action.layerIds), historyGroup: null };
+      return { ...state, ...normalizeSelection(state.design, action.layerIds, state.editingGroupId), historyGroup: null };
     case 'toggle-layer': {
       const layer = getLayer(state.design, action.layerId);
       return layer
@@ -419,7 +461,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         past: state.past.slice(0, -1),
         future: [state.design, ...state.future],
         historyGroup: null,
-        selectedLayerIds: validSelection(design, state.selectedLayerIds),
+        ...normalizeSelection(design, state.selectedLayerIds, state.editingGroupId),
       };
     }
     case 'redo': {
@@ -431,7 +473,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         past: [...state.past, state.design].slice(-MAX_HISTORY),
         future,
         historyGroup: null,
-        selectedLayerIds: validSelection(design, state.selectedLayerIds),
+        ...normalizeSelection(design, state.selectedLayerIds, state.editingGroupId),
       };
     }
     case 'set-size':
