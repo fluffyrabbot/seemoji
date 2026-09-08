@@ -483,6 +483,12 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   await expect(paintLayer).toContainText('1 stroke');
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect(await previewPixel(page, 256, 256)).toEqual([255, 79, 154, 255]);
+  // The default pressure-scaled stroke is only 2.24px wide in the 128px PNG.
+  // Its edge coverage varies with delivered subpixel coordinates and rasterizer.
+  // Restoration must reproduce this original export exactly.
+  const paintedCenter = (await downloadedPng(page)).center;
+  expect(paintedCenter[1]).toBeLessThan(150);
+  expect(paintedCenter[3]).toBe(255);
 
   await page.getByRole('button', { name: /Undo/ }).click();
   await expect(paintLayer).toHaveCount(0);
@@ -533,8 +539,7 @@ test('paints, masks, orders, exports, and removes layers non-destructively', asy
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
   expect((await previewPixel(page, 256, 256))[1]).toBe(79);
   const restoredCenter = (await downloadedPng(page)).center;
-  expect(restoredCenter[1]).toBeGreaterThanOrEqual(75);
-  expect(restoredCenter[1]).toBeLessThanOrEqual(85);
+  expect(restoredCenter).toEqual(paintedCenter);
 
   await page.getByRole('button', { name: 'Delete “Paint 1”' }).click();
   await expect(paintLayer).toHaveCount(0);
