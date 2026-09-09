@@ -888,3 +888,12 @@ input[type='text'], input[type='number'], input:not([type]), select {
   .group-edit-banner strong { font-size: .72rem; }
   .group-edit-banner button { min-height: 32px; padding: .25rem .5rem; }
 }
+
+@media (max-width: 360px) {
+  .canvas-quick-actions { height: 44px; }
+  .canvas-quick-actions > button { white-space: normal; line-height: 1.2; text-overflow: clip; }
+  .export-bar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.4rem; }
+  .size-control { display: flex; align-items: center; justify-content: space-between; }
+  .preview-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .preview-actions button { min-width: 0; white-space: normal; }
+}

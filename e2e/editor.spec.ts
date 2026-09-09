@@ -1450,7 +1450,7 @@ test('coordinates tabs through storage invalidation when BroadcastChannel is una
   await second.close();
 });
 
-for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
+for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 280, height: 568 }]) {
   test(`keeps the canvas and Copy PNG visible while editing at ${viewport.width} × ${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const tabs = page.getByLabel('Editing panels', { exact: true });
@@ -1459,6 +1459,12 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
     const assertPinnedPreview = async () => {
       await expect(canvas).toBeInViewport({ ratio: 1 });
       await expect(copy).toBeInViewport({ ratio: 1 });
+      await expect(page.getByRole('button', { name: 'Download PNG', exact: true })).toBeInViewport({ ratio: 1 });
+      for (const button of await page.locator('.canvas-quick-actions > button').all()) {
+        await expect(button).toBeInViewport({ ratio: 1 });
+        expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth
+          && element.scrollHeight <= element.clientHeight)).toBe(true);
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
     };
     await assertPinnedPreview();
