@@ -250,3 +250,15 @@ before starting another release.
 
 Cloudflare documents both [instant Pages rollbacks](https://developers.cloudflare.com/pages/configuration/rollbacks/)
 and the [production rollback API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/rollback/).
+
+## Browser failure diagnostics
+
+CI, Compatibility matrix, and the Deploy Pages verification job upload
+`test-results/` when a check fails and diagnostics exist. Each artifact is named
+`playwright-failures-<job>-<run-id>-<attempt>` and retained for seven days. It
+contains Playwright traces, failure screenshots, and error context for failed
+browser tests. Download it from the workflow run's Artifacts section, extract it,
+and open a trace with `npx playwright show-trace <path-to-trace.zip>`.
+
+A failure before browser tests may produce no diagnostics artifact. Successful
+browser tests discard their traces and do not capture failure screenshots.
