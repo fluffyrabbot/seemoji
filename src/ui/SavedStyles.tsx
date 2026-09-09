@@ -62,7 +62,7 @@ function StyleLibrary({ library, selectedLayer, onApply }: Omit<SavedStylesProps
       });
     }}>
       <label><span>Style name</span><input type="text" maxLength={EMOJI_STYLE_NAME_LIMIT}
-        placeholder="e.g. Mint sticker" value={name} disabled={!selectedLayer || snapshot.busy}
+        placeholder="e.g. Mint sticker" value={name} disabled={!selectedLayer}
         onChange={(event) => { setName(event.target.value); setNotice(null); }} /></label>
       <button type="submit" disabled={!selectedLayer || snapshot.busy || !name.trim()}>Save style</button>
     </form>

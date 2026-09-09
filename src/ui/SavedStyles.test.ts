@@ -21,7 +21,7 @@ const preview: EmojiStyleImportPreview = {
   ], omissions: [],
 };
 
-const setup = async () => {
+const setup = async (selectedLayer: typeof DEFAULT_EMOJI_LAYER | null = null) => {
   let snapshot: EmojiStyleLibrarySnapshot = { status: 'ready', busy: false, styles: [mint], issues: [], error: null };
   const listeners = new Set<() => void>();
   const methods = {
@@ -37,7 +37,7 @@ const setup = async () => {
   const container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
-  root.render(createElement(SavedStyles, { loadLibrary: async () => library, selectedLayer: null, onApply: vi.fn() }));
+  root.render(createElement(SavedStyles, { loadLibrary: async () => library, selectedLayer, onApply: vi.fn() }));
   await vi.waitFor(() => expect(container.querySelector('.style-archive')).not.toBeNull());
   const publish = (patch: Partial<EmojiStyleLibrarySnapshot>) => {
     snapshot = { ...snapshot, ...patch };
@@ -55,6 +55,24 @@ const pick = (container: HTMLElement, file: File) => {
 const file = () => new File(['{"backup":"fixture"}'], 'styles.json', { type: 'application/json' });
 
 describe('saved style backup workflow', () => {
+  it('keeps a draft name editable while refreshing the library', async () => {
+    const { container, publish, methods } = await setup(DEFAULT_EMOJI_LAYER);
+    const input = container.querySelector<HTMLInputElement>('.saved-style-form input')!;
+    input.focus();
+    publish({ busy: true });
+    await vi.waitFor(() => expect(container.querySelector('.saved-style-library')?.getAttribute('aria-busy')).toBe('true'));
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+    input.value = 'Draft during refresh';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(button(container, 'Save style').disabled).toBe(true);
+    publish({ busy: false });
+    await vi.waitFor(() => expect(button(container, 'Save style').disabled).toBe(false));
+    expect(input.value).toBe('Draft during refresh');
+    button(container, 'Save style').click();
+    await vi.waitFor(() => expect(methods.save).toHaveBeenCalledWith('Draft during refresh', DEFAULT_EMOJI_LAYER));
+  });
+
   it('exports and opens imports without an emoji selection while save/apply stay disabled', async () => {
     const { container, methods } = await setup();
     expect(button(container, 'Save style').disabled).toBe(true);
