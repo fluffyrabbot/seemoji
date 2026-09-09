@@ -56,7 +56,7 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
     <>
       <header className="app-header">
         <div>
-          <h1>seemoji</h1>
+          <h1>Emoji Studio</h1>
           <p>Pick a mood. Make it yours.</p>
         </div>
         <div className="history-actions" aria-label="Edit history">

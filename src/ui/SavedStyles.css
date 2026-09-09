@@ -24,7 +24,7 @@
 .style-import-filename { overflow-wrap: anywhere; margin: .3rem 0 .7rem; }
 .style-import-policy { display: grid; gap: .35rem; }
 .style-import-policy select { min-width: 0; width: 100%; font-size: 16px; }
-.style-import-counts { font-weight: 600; }
+.style-import-counts { font-weight: var(--font-weight-emphasis); }
 .style-import-entries { max-height: 220px; overflow-y: auto; padding: 0; margin: .65rem 0; list-style: none; }
 .style-import-entries li { border-top: 1px solid #454a61; padding: .5rem 0; overflow-wrap: anywhere; }
 .style-import-entries small { display: block; color: #bec5df; margin-top: .15rem; }
