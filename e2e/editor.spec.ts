@@ -2099,7 +2099,11 @@ for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside
   });
   const normalFrame = await documentFrame();
   await page.getByRole('button', { name: 'Edit group “Badge”', exact: true }).click();
-  expect(await documentFrame()).toEqual(normalFrame);
+  // Browser scroll offsets can differ by floating-point noise after focus scrolls.
+  const groupFrame = await documentFrame();
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    expect(groupFrame[key]).toBeCloseTo(normalFrame[key], 3);
+  }
   await stage.scrollIntoViewIfNeeded();
   const editingBox = (await stage.boundingBox())!;
   // The emoji is outside the group and visible above both shape members.
@@ -2108,7 +2112,10 @@ for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside
   await page.mouse.move(x, y);
   await page.mouse.down();
   await expect(page.getByRole('button', { name: 'Done editing group', exact: true })).toHaveCount(0);
-  expect(await stage.boundingBox()).toEqual(editingBox);
+  const exitedBox = (await stage.boundingBox())!;
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    expect(exitedBox[key]).toBeCloseTo(editingBox[key], 3);
+  }
   await page.mouse.move(x + 1, y + 1);
   await page.mouse.up();
   const after = await exportProject(page);
