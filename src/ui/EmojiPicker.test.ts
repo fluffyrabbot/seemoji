@@ -90,6 +90,41 @@ describe('emoji discovery', () => {
     expect(load).toHaveBeenCalledOnce();
   });
 
+  it.each(['replace', 'add'] as const)('keeps the full list expanded after a successful %s until Show less is chosen', async (mode) => {
+    const picker = await mount();
+    if (mode === 'add') {
+      picker.button('Add emoji').click();
+      await vi.waitFor(() => expect(picker.button('Add emoji').getAttribute('aria-pressed')).toBe('true'));
+    }
+    picker.button('See all').click();
+    await vi.waitFor(() => expect(picker.container.querySelectorAll('.emoji-grid button')).toHaveLength(EMOJI_SEARCH_ENTRIES.length));
+    const taco = picker.container.querySelector<HTMLButtonElement>('.emoji-grid [title="Taco"]')!;
+    await vi.waitFor(() => expect(taco.disabled).toBe(false));
+    let accept!: (accepted: boolean) => void;
+    picker.onPick.mockImplementationOnce(() => new Promise<boolean>((resolve) => { accept = resolve; }));
+    taco.click();
+    await vi.waitFor(() => expect(taco.disabled).toBe(true));
+    expect(picker.onPick).toHaveBeenLastCalledWith('🌮', mode === 'add'
+      ? { kind: 'add' }
+      : { kind: 'replace', layerId: DEFAULT_EMOJI_LAYER.id });
+    accept(true);
+    await vi.waitFor(() => expect(taco.disabled).toBe(false));
+    expect(picker.container.querySelector('.emoji-grid')?.getAttribute('aria-label')).toBe('All emoji');
+    expect(picker.container.querySelectorAll('.emoji-grid button')).toHaveLength(EMOJI_SEARCH_ENTRIES.length);
+    expect(picker.button('Show less')).toBeDefined();
+
+    picker.container.querySelector<HTMLButtonElement>('.emoji-grid [title="Pizza"]')!.click();
+    await vi.waitFor(() => expect(picker.onPick).toHaveBeenLastCalledWith('🍕', mode === 'add'
+      ? { kind: 'add' }
+      : { kind: 'replace', layerId: DEFAULT_EMOJI_LAYER.id }));
+    expect(picker.onPick).toHaveBeenCalledTimes(2);
+    picker.button('Show less').click();
+    await vi.waitFor(() => expect(picker.container.querySelector('.emoji-grid')?.getAttribute('aria-label'))
+      .toBe('Recent and popular emoji'));
+    expect(picker.container.querySelectorAll('.emoji-grid button').length).toBeLessThan(EMOJI_SEARCH_ENTRIES.length);
+    expect(picker.button('See all')).toBeDefined();
+  });
+
   it('accepts a pasted compound emoji while search data loads and preserves full names in successful recents', async () => {
     let release!: (entries: typeof EMOJI_SEARCH_ENTRIES) => void;
     const loading = new Promise<typeof EMOJI_SEARCH_ENTRIES>((resolve) => { release = resolve; });

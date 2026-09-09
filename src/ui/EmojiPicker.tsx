@@ -191,7 +191,6 @@ export default function EmojiPicker({
       if (accepted) {
         setRecents((previous) => [grapheme, ...previous.filter((recent) => toCodepoint(recent) !== toCodepoint(grapheme))].slice(0, 6));
         setText('');
-        setShowAll(false);
       } else {
         setNotice('This emoji couldn’t be used. Try another emoji or artwork pack.');
       }
