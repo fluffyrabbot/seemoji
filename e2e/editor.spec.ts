@@ -2264,3 +2264,29 @@ test('text shrinks dynamically inside a fixed plain box and bubble', async ({ pa
   expect(shortened.bubble).toEqual(speech.bubble);
   expect(shortened.fontSize).toBe(plain.fontSize);
 });
+
+test('initial comic bubble placement stays inside a panel and is one undo step', async ({ page }) => {
+  await page.getByRole('button', { name: '6-panel comic', exact: true }).click();
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('A caption that belongs in one panel');
+  await page.keyboard.press('Enter');
+  const original = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  const options = page.getByRole('group', { name: 'Text bubble', exact: true });
+  await options.getByRole('button', { name: 'Speech', exact: true }).click();
+  const placed = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  const box = placed.bounds!;
+  const x = box.x + placed.transform.x, y = box.y + placed.transform.y;
+  const panels = Array.from({ length: 6 }, (_, index) => ({ x: 0.04 + (index % 2) * 0.4725,
+    y: 0.04 + Math.floor(index / 2) * 0.315, width: 0.4475, height: 0.29 }));
+  expect(panels.some((panel) => x > panel.x && y > panel.y
+    && x + box.width < panel.x + panel.width && y + box.height < panel.y + panel.height)).toBe(true);
+  expect(placed.fontSize).toBe(original.fontSize);
+  await options.getByRole('button', { name: 'Thought', exact: true }).click();
+  const thought = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(thought.bounds).toEqual(placed.bounds);
+  expect(thought.transform).toEqual(placed.transform);
+  expect(thought.bubble!.tail).toEqual(placed.bubble!.tail);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
+});

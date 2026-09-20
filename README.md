@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-211,000 raw bytes and 66,000 gzip-9 bytes) and all deferred or otherwise
+212,000 raw bytes and 66,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 and the full emoji search catalog loaded only on interaction. See
@@ -243,3 +243,7 @@ V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
+
+New comic bubbles fit inside their nearest panel with a 6% margin and aim toward
+a nearby visible emoji in that panel. Subsequent bubble style changes preserve
+manual geometry; text continues to shrink within the chosen box.

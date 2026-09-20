@@ -1,4 +1,4 @@
-import { setTextBubble } from '../domain/textBubble';
+import { placeTextBubble } from '../domain/bubblePlacement';
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
 import type { RenderCoordinator } from '../application/renderCoordinator';
@@ -260,7 +260,7 @@ function SelectionControls({
         <div className="bubble-options" role="group" aria-label="Text bubble">
           {(['plain', 'speech', 'thought'] as const).map((kind) => <button key={kind} type="button"
             aria-pressed={(single.bubble?.kind ?? 'plain') === kind}
-            onClick={() => onUpdateLayer(setTextBubble(single, kind))}>
+            onClick={() => onUpdateLayer(placeTextBubble(single, kind, design))}>
             {kind[0]!.toUpperCase() + kind.slice(1)}
           </button>)}
         </div>

@@ -236,3 +236,11 @@ text layout serve both canvas export and inline editing, avoiding two geometry
 implementations. The synchronous renderer and selected-object tail interaction
 need this code immediately when opening saved artwork, so splitting it would
 introduce a loading phase into rendering. No dependency was added.
+
+### Panel-aware initial bubble placement
+
+Initial JavaScript moves from 209,885 raw / 65,014 gzip-9 bytes to 211,573 raw /
+65,727 gzip-9 bytes. Deferred code remains 11,062 raw (4,334 gzip-9 bytes).
+The initial raw ceiling becomes 212,000; compressed and deferred ceilings stay
+unchanged. Placement reuses comic panel and affine geometry, with no dependency.
+This small synchronous inspector action does not justify a new loading phase.
