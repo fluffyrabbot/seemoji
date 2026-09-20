@@ -18,18 +18,28 @@ describe('text bubbles', () => {
     expect(wrapped.lines.join('')).toBe(emoji.text);
     expect(wrapped.lines.every((line) => measure(line, text.fontSize) <= text.bounds.width)).toBe(true);
   });
-  it('grows to fit wrapped text with padding and preserves an external tail', () => {
+  it('shrinks text to fit padding while preserving the box and tail', () => {
     const fitted = fitText(setTextBubble(text, 'speech'), measure);
-    expect(fitted.bounds.height).toBeGreaterThan(text.bounds.height);
-    expect(fitted.bounds.height).toBeCloseTo(textLayout(fitted, measure).height);
+    expect(fitted.bounds).toEqual(text.bounds);
+    expect(fitted.fontSize).toBeLessThan(text.fontSize);
+    expect(textLayout(fitted, measure).height).toBeLessThanOrEqual(fitted.bounds.height);
     expect(fitted.bubble!.tail.y).toBeGreaterThan(fitted.bounds.y + fitted.bounds.height);
     expect(fitted.text).toBe(text.text);
   });
   it('keeps long text within page limits and retains the complete text value', () => {
     const fitted = fitText(setTextBubble({ ...text, text: 'long words '.repeat(40), bounds: { ...text.bounds, y: 0.8 } }, 'thought'), measure);
-    expect(fitted.bounds.y + fitted.bounds.height).toBeLessThanOrEqual(1);
-    expect(textLayout(fitted, measure).height).toBeLessThanOrEqual(1);
+    expect(fitted.bounds).toEqual({ ...text.bounds, y: 0.8 });
+    expect(textLayout(fitted, measure).height).toBeLessThanOrEqual(text.bounds.height);
     expect(fitted.text).toBe('long words '.repeat(40));
+  });
+  it('fits even a narrow box without dropping text or changing the preferred size', () => {
+    const source = { ...text, text: 'W'.repeat(500), bounds: { x: 0, y: 0, width: 0.001, height: 0.001 } };
+    const fitted = fitText(source, measure);
+    const layout = textLayout(fitted, measure);
+    expect(layout.height).toBeLessThanOrEqual(source.bounds.height);
+    expect(layout.lines.every((line) => measure(line, fitted.fontSize) <= layout.width)).toBe(true);
+    expect(layout.lines.join('')).toBe(source.text);
+    expect(source.fontSize).toBe(text.fontSize);
   });
   it('switches styles and removes the bubble without replacing the object or its text', () => {
     const speech = setTextBubble(text, 'speech');

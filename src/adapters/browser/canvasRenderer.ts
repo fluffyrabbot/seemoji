@@ -1,4 +1,4 @@
-import { bubblePaths, textLayout } from '../../domain/textBubble';
+import { bubblePaths, fitText, textLayout } from '../../domain/textBubble';
 import { comicPanels } from '../../domain/canvasLayout';
 import type { BrushStroke, MaskStroke, StrokePoint } from '../../domain/design';
 import { toTopLeftOrigin, type AffineMatrix, type RenderPlan } from '../../domain/renderPlan';
@@ -78,6 +78,10 @@ const drawText = (
   layer: Extract<RenderLayerInput, { readonly kind: 'text' }>,
   size: number,
 ) => {
+  layer = fitText(layer, (text, fontSize) => {
+    destination.font = `${fontSize * 1024}px ${layer.fontFamily}`;
+    return destination.measureText(text).width / 1024;
+  });
   const { x, y } = layer.bounds;
   destination.save();
   destination.scale(size, size);

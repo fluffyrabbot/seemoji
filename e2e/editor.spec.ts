@@ -219,6 +219,7 @@ const exportProject = async (page: Page) => {
       readonly kind: string;
       readonly name: string;
       readonly text?: string;
+      readonly fontSize?: number;
       readonly bubble?: { readonly kind: string; readonly tail: { readonly x: number; readonly y: number } };
       readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
       readonly source?: { readonly grapheme: string };
@@ -2177,7 +2178,7 @@ test('one-click bubbles wrap, export, persist, and move their tail as one undoab
   const speech = await exportProject(page);
   const original = speech.design.layers.find(({ kind }) => kind === 'text')!;
   expect(original.bubble?.kind).toBe('speech');
-  expect(original.bounds!.height).toBeGreaterThan(0.24);
+  expect(original.bounds!.height).toBe(0.24);
   // White body and black outline are real PNG content, not editing guides.
   expect((await downloadedPng(page)).center[3]).toBe(255);
   await page.getByRole('button', { name: /Undo/ }).click();
@@ -2234,4 +2235,32 @@ test('rotated bubble tails follow pointer coordinates and Escape cancels a drag'
   expect(moved.bubble!.tail.y).toBeCloseTo(original.bubble!.tail.y - 0.08, 2);
   await page.getByRole('button', { name: /Undo/ }).click();
   expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)!.bubble).toEqual(original.bubble);
+});
+
+test('text shrinks dynamically inside a fixed plain box and bubble', async ({ page }) => {
+  await placeText(page);
+  const editor = page.getByRole('textbox', { name: 'Edit canvas text', exact: true });
+  const fontSize = () => editor.evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+  await editor.fill('Hi');
+  const shortSize = await fontSize();
+  await editor.fill('Many words need to fit in the same little box. '.repeat(8));
+  await expect.poll(fontSize).toBeLessThan(shortSize / 2);
+  const longText = await editor.inputValue();
+  await page.keyboard.press('Enter');
+  const plain = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  const speech = (await exportProject(page)).design.layers.find(({ id }) => id === plain.id)!;
+  expect(speech.bounds).toEqual(plain.bounds);
+  expect(speech.text).toBe(longText);
+  const viewport = page.getByLabel(/Interactive emoji canvas/);
+  await viewport.focus();
+  await viewport.press('Enter');
+  const bubbleLongSize = await fontSize();
+  await editor.fill('Hi');
+  await expect.poll(fontSize).toBeGreaterThan(bubbleLongSize * 2);
+  await page.keyboard.press('Enter');
+  const shortened = (await exportProject(page)).design.layers.find(({ id }) => id === plain.id)!;
+  expect(shortened.bounds).toEqual(speech.bounds);
+  expect(shortened.bubble).toEqual(speech.bubble);
+  expect(shortened.fontSize).toBe(plain.fontSize);
 });

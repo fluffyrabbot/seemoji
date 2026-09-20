@@ -24,26 +24,20 @@ export function textLayout(layer: Pick<TextLayer, 'bounds' | 'fontSize' | 'text'
   return { lines, padding, width, lineHeight, height: lines.length * lineHeight + padding * 2 };
 }
 
-/** Preserve text size where possible; grow down, then up, and only shrink at page limits. */
-export function fitText(layer: TextLayer, measure: MeasureText): TextLayer {
-  let fitted = layer;
-  let layout = textLayout(fitted, measure);
-  while (layout.height > 1 && fitted.fontSize > 0.01) {
-    fitted = { ...fitted, fontSize: Math.max(0.01, fitted.fontSize * 0.9) };
-    layout = textLayout(fitted, measure);
+/** Keep the chosen box fixed. Font size is a ceiling; fit at render time without losing it. */
+export function fitText<T extends Pick<TextLayer, 'bounds' | 'fontSize' | 'text' | 'bubble'>>(layer: T, measure: MeasureText): T {
+  const fits = (fontSize: number) => {
+    const layout = textLayout({ ...layer, fontSize }, measure);
+    return layout.height <= layer.bounds.height
+      && layout.lines.every((line) => measure(line, fontSize) <= layout.width);
+  };
+  if (fits(layer.fontSize)) return layer;
+  let low = 0, high = layer.fontSize;
+  for (let i = 0; i < 24; i++) {
+    const middle = (low + high) / 2;
+    if (fits(middle)) low = middle; else high = middle;
   }
-  const height = Math.min(1, Math.max(layer.bounds.height, layout.height));
-  const y = Math.min(fitted.bounds.y, 1 - height);
-  const oldBottom = layer.bounds.y + layer.bounds.height;
-  let bubble = fitted.bubble;
-  if (bubble && (height !== layer.bounds.height || y !== layer.bounds.y)) {
-    let tailY = bubble.tail.y;
-    if (tailY >= oldBottom) tailY = y + height + (tailY - oldBottom);
-    else if (tailY <= layer.bounds.y) tailY += y - layer.bounds.y;
-    if (tailY > 1) tailY = Math.max(0, y - 0.08);
-    bubble = { ...bubble, tail: { ...bubble.tail, y: Math.max(0, tailY) } };
-  }
-  return { ...fitted, ...(bubble ? { bubble } : {}), bounds: { ...fitted.bounds, y, height } };
+  return { ...layer, fontSize: Math.max(Number.EPSILON, low) };
 }
 
 export function setTextBubble(layer: TextLayer, kind: BubbleKind | 'plain'): TextLayer {

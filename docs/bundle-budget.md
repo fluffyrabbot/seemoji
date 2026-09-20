@@ -228,9 +228,9 @@ The initial raw ceiling drops to 205,000 bytes; its compressed ceiling stays
 
 ### One-click text bubbles
 
-Initial JavaScript moves from 204,253 raw / 63,009 gzip-9 bytes to 210,045 raw /
-65,098 gzip-9 bytes. Deferred JavaScript moves from 11,062 raw / 4,325 gzip-9
-bytes to 11,080 raw / 4,349 gzip-9 bytes. Initial ceilings become 211,000 raw /
+Initial JavaScript moves from 204,253 raw / 63,009 gzip-9 bytes to 209,885 raw /
+65,014 gzip-9 bytes. Deferred JavaScript moves from 11,062 raw / 4,325 gzip-9
+bytes to 11,062 raw / 4,335 gzip-9 bytes. Initial ceilings become 211,000 raw /
 66,000 gzip-9 bytes; deferred ceilings stay unchanged. Shared bubble paths and
 text layout serve both canvas export and inline editing, avoiding two geometry
 implementations. The synchronous renderer and selected-object tail interaction

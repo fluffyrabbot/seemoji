@@ -1,4 +1,3 @@
-import { fitCanvasText } from './textLayout';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
@@ -996,7 +995,7 @@ export default function Preview({
             />
             {editingText?.kind === 'text' && <CanvasTextEditor key={editingText.id}
               layer={editingText} size={previewRenderSize} onFinish={(text) => {
-                if (text !== null && (text || ' ') !== editingText.text) onEditText(fitCanvasText({ ...editingText, text: text || ' ' }));
+                if (text !== null && (text || ' ') !== editingText.text) onEditText({ ...editingText, text: text || ' ' });
                 setEditingTextId(null);
               }} />}
             {canvasSettings.showGrid && (

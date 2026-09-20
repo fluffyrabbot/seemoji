@@ -1,5 +1,4 @@
 import { setTextBubble } from '../domain/textBubble';
-import { fitCanvasText } from './textLayout';
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
 import type { RenderCoordinator } from '../application/renderCoordinator';
@@ -261,12 +260,12 @@ function SelectionControls({
         <div className="bubble-options" role="group" aria-label="Text bubble">
           {(['plain', 'speech', 'thought'] as const).map((kind) => <button key={kind} type="button"
             aria-pressed={(single.bubble?.kind ?? 'plain') === kind}
-            onClick={() => onUpdateLayer(fitCanvasText(setTextBubble(single, kind)))}>
+            onClick={() => onUpdateLayer(setTextBubble(single, kind))}>
             {kind[0]!.toUpperCase() + kind.slice(1)}
           </button>)}
         </div>
         <label><span>Text</span><textarea id="editor-text" rows={3} maxLength={500} value={single.text}
-          onChange={(event) => updateSingle(fitCanvasText({ ...single, text: event.target.value || ' ' }), 'text')}
+          onChange={(event) => updateSingle({ ...single, text: event.target.value || ' ' }, 'text')}
           onBlur={onCommit} /></label>
         <label className="color-control"><span>Text color</span>
           <input type="color" value={single.color}

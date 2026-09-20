@@ -240,3 +240,6 @@ Text layers support Plain, Speech, and Thought presentation with wrapped text, a
 padding, and a draggable tail. The bubble is part of the text object and exports with it.
 Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
 V4 documents migrate to V5 preserving their canvas layout and plain text layers.
+
+Text automatically shrinks to fit the chosen box or bubble without changing its
+bounds. Shortening text restores its size up to the selected font-size ceiling.
