@@ -165,7 +165,7 @@ const placeText = async (page: Page) => {
   const canvas = await page.locator('.canvas-world').boundingBox();
   if (!canvas) throw new Error('Missing canvas');
   await page.mouse.click(canvas.x + canvas.width * 0.2, canvas.y + canvas.height * 0.38);
-  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Edit canvas text', exact: true })).toBeFocused();
 };
 const placeShape = async (page: Page, shape: string) => {
   await page.getByRole('button', { name: 'Shape options', exact: true }).click();
@@ -789,7 +789,8 @@ test('creates structured layers, multi-selects, aligns, group-transforms, and fl
   await placeShape(page, 'ellipse');
   await placeShape(page, 'line');
   await placeText(page);
-  await page.getByRole('textbox', { name: 'Text', exact: true }).fill('Hello');
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hello');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Hello');
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toBeVisible();
   await expect(page.locator('.layer-select').filter({ hasText: 'Ellipse' })).toBeVisible();
@@ -1501,7 +1502,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
     await assertPinnedPreview();
     await placeText(page);
     await expect(tabs.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await page.getByRole('textbox', { name: 'Text', exact: true }).fill('hello');
+    await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('hello');
+  await page.keyboard.press('Enter');
     await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('24');
     await assertPinnedPreview();
     await moreControls(page);
@@ -1537,7 +1539,8 @@ test('searches by meaning, applies Squish, and copies the resulting PNG', async 
 test('adds text, rotates only the selected text, and undoes or resets without deleting objects', async ({ page }) => {
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('12');
   await placeText(page);
-  await page.getByRole('textbox', { name: 'Text', exact: true }).fill('hello');
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('hello');
+  await page.keyboard.press('Enter');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
   let project = await exportProject(page);
   expect(project.design.layers.find(({ kind }) => kind === 'emoji')?.transform.rotate).toBe(12);
@@ -2196,8 +2199,9 @@ test('unified toolbar focuses new text and keeps secondary modes when More close
   await page.setViewportSize({ width: 390, height: 844 });
   const tools = page.getByLabel('Canvas tools', { exact: true });
   await placeText(page);
-  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Edit canvas text', exact: true })).toBeFocused();
   await page.keyboard.type('Caption');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Caption');
   await showEmojiPicker(page);
   await expect(emojiSearch(page)).toBeFocused();
@@ -2252,4 +2256,53 @@ test('placement tools arm without creating, preview reverse drags, and commit on
   await page.keyboard.press('t');
   await expect(tools.getByRole('button', { name: 'Text', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
+});
+
+test('canvas text edits commit once, cancel cleanly, and reopen by double-click', async ({ page }) => {
+  await placeText(page);
+  const input = page.getByRole('textbox', { name: 'Edit canvas text', exact: true });
+  const worldBounds = await page.locator('.canvas-world').boundingBox();
+  const inputBounds = await input.boundingBox();
+  expect(inputBounds!.width / worldBounds!.width).toBeCloseTo(0.6, 2);
+  await input.fill('First caption');
+  await input.press('Enter');
+  await expect(input).toHaveCount(0);
+  const viewport = page.getByLabel(/Interactive emoji canvas/);
+  await viewport.focus();
+  await viewport.press('Enter');
+  await input.fill('Discard me');
+  await input.press('Escape');
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('First caption');
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!canvas) throw new Error('Missing canvas');
+  await page.mouse.dblclick(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.45);
+  await expect(input).toBeFocused();
+  await input.fill('Second caption');
+  await input.press('Tab');
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Second caption');
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('First caption');
+});
+
+test('shape modifiers update the preview without moving the pointer and commit matching geometry', async ({ page }) => {
+  await chooseTool(page, 'Rectangle');
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!canvas) throw new Error('Missing canvas');
+  await page.mouse.move(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * 0.7, canvas.y + canvas.height * 0.6);
+  await page.keyboard.down('Shift');
+  await page.keyboard.down('Alt');
+  const preview = page.locator('.placement-preview rect');
+  await expect(preview).toHaveAttribute('width', /0\.3[89]|0\.4/);
+  const width = Number(await preview.getAttribute('width'));
+  expect(Number(await preview.getAttribute('height'))).toBeCloseTo(width);
+  expect(Number(await preview.getAttribute('x')) + width / 2).toBeCloseTo(0.5, 2);
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await page.keyboard.up('Shift');
+  const project = await exportProject(page);
+  const shape = project.design.layers.find(({ kind }) => kind === 'shape');
+  expect(shape?.bounds?.width).toBeCloseTo(width);
+  expect(shape?.bounds?.height).toBeCloseTo(width);
 });

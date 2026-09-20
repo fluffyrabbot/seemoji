@@ -26,7 +26,7 @@ export default function ExportBarAa({
     </label>
     <div className="preview-actions">
       <button className="primary" disabled={!prepared || copying} onClick={onCopy}>
-        {!prepared ? 'Preparing PNG…' : copying ? 'Copying…' : 'Copy PNG'}
+        Copy PNG
       </button>
       <button disabled={!prepared} onClick={onDownload}>Download PNG</button>
     </div>

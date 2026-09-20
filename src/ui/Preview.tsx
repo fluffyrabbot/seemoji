@@ -1,3 +1,4 @@
+import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
 import { createPlacedLayer, isPlacementTool, type PlacementTool } from './placement';
 import {
@@ -71,6 +72,7 @@ interface Props {
   readonly canvasSettings: CanvasSettings;
   readonly onToolChange: (tool: EditorTool) => void;
   readonly onAddPaint: () => void;
+  readonly onEditText: (layer: SceneLayer) => void;
   readonly onPlaceLayer: (layer: SceneLayer) => void;
   readonly onBrushChange: (brush: BrushSettings) => void;
   readonly onCanvasSettingsChange: (settings: CanvasSettings) => void;
@@ -160,6 +162,7 @@ export default function Preview({
   canvasSettings,
   onToolChange,
   onPlaceLayer,
+  onEditText,
   onAddPaint,
   onBrushChange,
   onCanvasSettingsChange,
@@ -179,7 +182,9 @@ export default function Preview({
   const gesture = useRef<Gesture | null>(null);
   const draftRef = useRef<DraftStroke | null>(null);
   const marqueeRef = useRef<Marquee | null>(null);
-  const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; id: string; color: string } | null>(null);
+  const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; shiftKey: boolean; altKey: boolean; id: string; color: string } | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const editingText = design.layers.find((layer) => layer.id === editingTextId && layer.visible);
   const [placement, setPlacement] = useState<typeof placementRef.current>(null);
   useLayoutEffect(() => {
     placementRef.current = null;
@@ -225,7 +230,7 @@ export default function Preview({
     endTouch,
   } = useCanvasViewport(stageRef);
   const previewDesign = useMemo(
-    () => showOriginal ? {
+    () => editingTextId ? { ...design, layers: design.layers.filter((layer) => layer.id !== editingTextId) } : showOriginal ? {
       ...design,
       layers: design.layers.map((candidate) => !selectedLayerIds.includes(candidate.id) ? candidate : {
         ...candidate,
@@ -233,7 +238,7 @@ export default function Preview({
         ...(candidate.kind === 'emoji' ? { appearance: DEFAULT_APPEARANCE } : {}),
       }),
     } : design,
-    [design, showOriginal, selectedLayerIds],
+    [design, showOriginal, selectedLayerIds, editingTextId],
   );
   const renderKey = `${size}:${JSON.stringify(design)}`;
   const previewKey = `${previewRenderSize}:${JSON.stringify(previewDesign)}`;
@@ -439,7 +444,7 @@ export default function Preview({
       stageRef.current.focus({ preventScroll: true });
       stageRef.current.setPointerCapture(event.pointerId);
       const next = { tool, pointerId: event.pointerId, start: point, current: point,
-        id: crypto.randomUUID(), color: brush.color };
+        id: crypto.randomUUID(), color: brush.color, shiftKey: event.shiftKey, altKey: event.altKey };
       placementRef.current = next;
       setPlacement(next);
       return;
@@ -535,7 +540,7 @@ export default function Preview({
     }
     if (continuePan(event)) return;
     if (placementRef.current?.pointerId === event.pointerId && worldPoint) {
-      const next = { ...placementRef.current, current: worldPoint };
+      const next = { ...placementRef.current, current: worldPoint, shiftKey: event.shiftKey, altKey: event.altKey };
       placementRef.current = next;
       setPlacement(next);
       return;
@@ -638,7 +643,9 @@ export default function Preview({
       setPlacement(null);
       if (placed.tool === 'text' || Math.hypot(end.x - placed.start.x, end.y - placed.start.y)
           * previewRenderSize * viewport.zoom >= 3) {
-        onPlaceLayer(createPlacedLayer(placed.tool, placed.start, end, placed.id, placed.color));
+        const layer = createPlacedLayer(placed.tool, placed.start, end, placed.id, placed.color, event);
+        onPlaceLayer(layer);
+        if (layer.kind === 'text') setEditingTextId(layer.id);
       }
       return;
     }
@@ -771,7 +778,7 @@ export default function Preview({
       <div className="panel-heading">
         <div>
           <h2>Canvas</h2>
-          <p>{isPlacementTool(tool) ? tool === 'text' ? 'Click or drag to place text' : `Drag to create a ${tool}` : 'Drag to move · corner to resize · round handle to rotate'}</p>
+          <p>{isPlacementTool(tool) ? tool === 'text' ? 'Click or drag to place text' : tool === 'line' ? 'Drag to draw · Alt: from center' : 'Drag to draw · Shift: equal sides · Alt: from center' : 'Drag to move · corner to resize · round handle to rotate'}</p>
         </div>
         <div className="viewport-actions">
           <button type="button" aria-label="Zoom out"
@@ -912,8 +919,37 @@ export default function Preview({
               if (!suppressFill.current) commitFill(event as unknown as PointerEvent<HTMLDivElement>);
             }
             : undefined}
-          onKeyDown={nudge}
-          onKeyUp={onTransformCommit}
+          onDoubleClick={(event) => {
+            if (tool !== 'select') return;
+            const point = pointInCanvas(event);
+            const hit = point && hitTestLayers(design.layers, point);
+            if (hit?.kind === 'text') {
+              onSelectionChange([hit.id]);
+              setEditingTextId(hit.id);
+            }
+          }}
+          onKeyDown={(event) => {
+            const selected = design.layers.find((layer) => layer.id === selectedLayerIds[0]);
+            if (event.key === 'Enter' && tool === 'select' && selectedLayerIds.length === 1 && selected?.kind === 'text') {
+              event.preventDefault();
+              setEditingTextId(selected.id);
+            } else {
+              if (placementRef.current) {
+                const next = { ...placementRef.current, shiftKey: event.shiftKey, altKey: event.altKey };
+                placementRef.current = next;
+                setPlacement(next);
+              }
+              nudge(event);
+            }
+          }}
+          onKeyUp={(event) => {
+            if (placementRef.current) {
+              const next = { ...placementRef.current, shiftKey: event.shiftKey, altKey: event.altKey };
+              placementRef.current = next;
+              setPlacement(next);
+            }
+            onTransformCommit();
+          }}
           onPointerMove={continueGesture}
           onPointerUp={endGesture}
           onPointerCancel={cancelGesture}
@@ -927,6 +963,11 @@ export default function Preview({
               height={previewRenderSize}
               aria-label={`Preview of ${layer.source.grapheme}`}
             />
+            {editingText?.kind === 'text' && <CanvasTextEditor key={editingText.id}
+              layer={editingText} size={previewRenderSize} onFinish={(text) => {
+                if (text !== null && (text || ' ') !== editingText.text) onEditText({ ...editingText, text: text || ' ' });
+                setEditingTextId(null);
+              }} />}
             {canvasSettings.showGrid && (
               <svg className="grid-overlay" viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
                 {Array.from({ length: canvasSettings.gridDivisions - 1 }, (_, index) => {
@@ -937,7 +978,7 @@ export default function Preview({
               </svg>
             )}
             {placement && (() => {
-              const layer = createPlacedLayer(placement.tool, placement.start, placement.current, placement.id, placement.color);
+              const layer = createPlacedLayer(placement.tool, placement.start, placement.current, placement.id, placement.color, placement);
               if (layer.kind !== 'shape' && layer.kind !== 'text') return null;
               const { x, y, width, height } = layer.bounds;
               return <svg className="draft-overlay placement-preview" viewBox="0 0 1 1" aria-hidden="true">
@@ -979,7 +1020,7 @@ export default function Preview({
                 </g>
               </svg>
             )}
-            {!showOriginal && tool === 'select' && (selectedLayers.length > 0 || marquee) && (
+            {!showOriginal && !editingTextId && tool === 'select' && (selectedLayers.length > 0 || marquee) && (
               <svg className="transform-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
               {selectedLayers.length > 0 && <g>

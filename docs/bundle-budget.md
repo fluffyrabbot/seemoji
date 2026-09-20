@@ -7,7 +7,7 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 203,000 | 64,000 |
+| Initial | 205,000 | 64,000 |
 | Deferred | 38,000 | 13,800 |
 
 Both limits are independent. Total JavaScript is informational; these gates
@@ -187,3 +187,15 @@ boundary limited to the displayed icons; dynamically loading individual icons
 or the small placement geometry would add asynchronous states to basic editing
 without materially reducing the initial editor's required work. The extra
 transfer buys direct manipulation and consistent active-tool feedback.
+
+### Shape modifiers and direct canvas text editing
+
+The initial graph moves from 201,595 raw / 62,507 gzip-9 bytes to
+203,784 raw / 63,194 gzip-9 bytes. Deferred code remains 37,518 raw
+(13,629 gzip-9 bytes after chunk reference changes). The initial raw ceiling
+moves from 203,000 to 205,000 bytes; the 64,000-byte compressed ceiling stays.
+This adds constrained and centered shape placement plus a local text draft,
+commit/cancel handling, and an editor positioned in canvas coordinates.
+The geometry reuses the existing placement path and affine transforms; the
+small editor belongs in the initial graph so first placement can focus it
+immediately without a network/loading interruption. No dependency was added.

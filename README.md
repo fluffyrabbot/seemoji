@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-203,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
+205,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 38,000 raw bytes and 13,800 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 the full emoji search catalog, and saved-style storage loaded only on interaction. See

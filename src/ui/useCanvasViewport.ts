@@ -82,7 +82,7 @@ export function useCanvasViewport(stageRef: RefObject<HTMLDivElement | null>) {
     [],
   );
 
-  const pointInViewport = (event: PointerEvent): CanvasPoint | null => {
+  const pointInViewport = (event: { readonly clientX: number; readonly clientY: number }): CanvasPoint | null => {
     const bounds = stageRef.current?.getBoundingClientRect();
     if (!bounds || bounds.width === 0 || bounds.height === 0) return null;
     return {
@@ -91,7 +91,7 @@ export function useCanvasViewport(stageRef: RefObject<HTMLDivElement | null>) {
     };
   };
 
-  const pointInCanvas = (event: PointerEvent): CanvasPoint | null => {
+  const pointInCanvas = (event: { readonly clientX: number; readonly clientY: number }): CanvasPoint | null => {
     const point = pointInViewport(event);
     if (!point) return null;
     const current = viewportRef.current;

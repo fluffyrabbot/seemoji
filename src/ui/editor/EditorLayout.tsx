@@ -192,16 +192,12 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             canvasSettings={model.canvasSettings}
             onToolChange={commands.canvas.changeTool}
             onAddPaint={commands.layers.addPaint}
+            onEditText={(layer) => commands.layers.update(layer)}
             onPlaceLayer={(layer) => {
               commands.layers.place(layer);
               setPanel('adjust');
               if (layer.kind === 'text') {
                 commands.canvas.changeTool('select');
-                requestAnimationFrame(() => {
-                  const input = document.getElementById('editor-text') as HTMLInputElement | null;
-                  input?.focus();
-                  input?.select();
-                });
               }
             }}
             onBrushChange={commands.canvas.changeBrush}
