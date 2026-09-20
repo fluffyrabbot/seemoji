@@ -1,3 +1,4 @@
+import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
 import { createPlacedLayer, isPlacementTool, type PlacementTool } from './placement';
@@ -19,6 +20,7 @@ import {
   DESIGN_LIMITS,
   getEmojiLayer,
   type BrushStroke,
+  type CanvasLayout,
   type DesignDocument,
   type MaskStroke,
   type RasterLayer,
@@ -75,6 +77,7 @@ interface Props {
   readonly onEditText: (layer: SceneLayer) => void;
   readonly onPlaceLayer: (layer: SceneLayer) => void;
   readonly onBrushChange: (brush: BrushSettings) => void;
+  readonly onCanvasLayoutChange: (layout: CanvasLayout) => void;
   readonly onCanvasSettingsChange: (settings: CanvasSettings) => void;
   readonly onPaintStroke: (layerId: string, stroke: BrushStroke, createLayerName?: string) => void;
   readonly onMaskStroke: (layerId: string, stroke: MaskStroke) => void;
@@ -166,6 +169,7 @@ export default function Preview({
   onAddPaint,
   onBrushChange,
   onCanvasSettingsChange,
+  onCanvasLayoutChange,
   onPaintStroke,
   onMaskStroke,
   onTransformsChange,
@@ -787,19 +791,19 @@ export default function Preview({
           <button type="button" aria-label="Zoom in"
             onClick={() => setZoom(viewport.zoom * 1.25)}>＋</button>
           <button type="button" onClick={fit}>Fit</button>
-          <details className="canvas-settings">
-            <summary>Grid</summary>
-            <label><input type="checkbox" checked={canvasSettings.showGrid}
-              onChange={(event) => onCanvasSettingsChange({ ...canvasSettings, showGrid: event.target.checked })} /> Show grid</label>
-            <label><input type="checkbox" checked={canvasSettings.snap}
-              onChange={(event) => onCanvasSettingsChange({ ...canvasSettings, snap: event.target.checked })} /> Snap</label>
-            <label><input type="checkbox" checked={canvasSettings.showGuides}
-              onChange={(event) => onCanvasSettingsChange({ ...canvasSettings, showGuides: event.target.checked })} /> Guides</label>
-            <label>Divisions <select aria-label="Grid divisions" value={canvasSettings.gridDivisions}
-              onChange={(event) => onCanvasSettingsChange({ ...canvasSettings, gridDivisions: Number(event.target.value) })}>
-              {[4, 8, 12, 16, 24, 32].map((value) => <option key={value}>{value}</option>)}
-            </select></label>
-          </details>
+          <div className="canvas-layouts" role="group" aria-label="Canvas layout">
+            {(['default', 'comic4', 'comic6'] as const).map((layout) => {
+              const label = layout === 'default' ? 'Default canvas' : layout === 'comic4' ? '4-panel comic' : '6-panel comic';
+              const panels = comicPanels(layout);
+              return <button type="button" key={layout} aria-label={label} title={label}
+                aria-pressed={design.canvas.layout === layout} onClick={() => onCanvasLayoutChange(layout)}>
+                <svg width="20" height="20" viewBox="0 0 1 1" fill="none" stroke="currentColor" strokeWidth="0.055" aria-hidden="true">
+                  {(panels.length ? panels : [{ x: 0.04, y: 0.04, width: 0.92, height: 0.92 }]).map((panel, i) =>
+                    <rect key={i} {...panel} />)}
+                </svg>
+              </button>;
+            })}
+          </div>
           <button
             type="button"
             className="compare-button"
@@ -823,7 +827,8 @@ export default function Preview({
         </div>
       </div>
 
-      <CanvasTools tool={tool} groupName={editingGroup?.name ?? null}
+      <CanvasTools tool={tool} showGrid={canvasSettings.showGrid}
+        onToggleGrid={() => onCanvasSettingsChange({ ...canvasSettings, showGrid: !canvasSettings.showGrid })} groupName={editingGroup?.name ?? null}
         onFinishGroupEdit={onFinishGroupEdit} onToolChange={onToolChange} />
       <div className="paint-toolbar" aria-label="Tool settings"
         hidden={tool === 'select' || tool === 'pan' || isPlacementTool(tool)}>

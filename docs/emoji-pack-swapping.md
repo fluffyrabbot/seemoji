@@ -10,8 +10,8 @@
 
 ## Overview
 
-> **Current scene format (2026-09-07):** the editor now normalizes recipes to
-> `DesignDocumentV3`, adding durable named selection groups. V1 and V2 designs
+> **Current scene format (2026-09-19):** the editor now normalizes recipes to
+> `DesignDocumentV4`, with durable named selection groups and canvas layouts. V1–V3 designs
 > migrate through the design codec. The V2 references below describe the original
 > pack rollout; emoji source identities and pinned artwork semantics are unchanged.
 

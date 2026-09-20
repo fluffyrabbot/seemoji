@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-205,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
+206,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 38,000 raw bytes and 13,800 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 the full emoji search catalog, and saved-style storage loaded only on interaction. See
@@ -79,7 +79,7 @@ EditorWorkspaceStore ────────► WorkspaceController ───�
    └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
-DesignDocumentV3 scene + named selection groups
+DesignDocumentV4 scene + canvas layout + named selection groups
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -124,13 +124,13 @@ not treat Strict Mode behavior as equivalent between the two runtimes.
 
 ## Design and rendering invariants
 
-`DesignDocumentV3` is an ordered scene with transparent canvas metadata, durable named selection groups, and a
+`DesignDocumentV4` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
 common scene-node contract for emoji, pressure strokes, geometric shapes, text,
 and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
 instead of changing source artwork or brush strokes. Paint layers also own an
 affine transform, so moving, resizing, and rotating them never rewrites points.
-Unknown document versions are rejected. V1 recipes and V2 scenes have explicit one-way
+Unknown document versions are rejected. V1 recipes and V2–V3 scenes have explicit one-way
 migrations into the current scene model. Groups retain their identity through history,
 autosave, project export, and workspace archives. Their non-overlapping membership
 organizes selection without changing layer paint order.

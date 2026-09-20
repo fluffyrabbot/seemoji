@@ -70,7 +70,7 @@ export class RenderCoordinator {
         return { kind: 'raster' as const, ...common, resolution: layer.resolution, runs: layer.runs };
       }),
     )
-      .then((layers) => this.#renderer.render({ size, layers }))
+      .then((layers) => this.#renderer.render({ size, layers, layout: design.canvas.layout }))
       .catch((cause: unknown) => {
         this.#frames.delete(key);
         throw cause;

@@ -136,7 +136,7 @@ function StylePreview({ layer, renderer }: { readonly layer: EmojiLayer; readonl
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
   // Position does not belong in the style swatch; keep every preview centered and visible.
-  const document: DesignDocument = { version: 3, groups: [], canvas: { background: 'transparent' }, layers: [{
+  const document: DesignDocument = { version: 4, groups: [], canvas: { layout: 'default' }, layers: [{
     ...layer, visible: true, opacity: 1, transform: { ...layer.transform, x: 0, y: 0 },
   }] };
   const key = JSON.stringify(document);

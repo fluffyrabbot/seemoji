@@ -7,7 +7,7 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 205,000 | 64,000 |
+| Initial | 206,000 | 64,000 |
 | Deferred | 38,000 | 13,800 |
 
 Both limits are independent. Total JavaScript is informational; these gates
@@ -199,3 +199,18 @@ commit/cancel handling, and an editor positioned in canvas coordinates.
 The geometry reuses the existing placement path and affine transforms; the
 small editor belongs in the initial graph so first placement can focus it
 immediately without a network/loading interruption. No dependency was added.
+
+
+### Comic canvas layouts and visible artwork selector
+
+The initial graph moves from 203,784 raw / 63,194 gzip-9 bytes to
+205,142 raw / 63,717 gzip-9 bytes. Deferred code remains 37,518 raw
+(13,632 gzip-9 bytes after chunk references change). The initial raw ceiling
+moves from 205,000 to 206,000 bytes; the compressed ceiling stays at 64,000.
+The added code persists and migrates canvas layout state, renders comic panels
+in previews and PNGs, and derives smaller emoji placement from panel geometry.
+Shared geometry avoids separate export and editor implementations. These are
+small synchronous drawing and toolbar operations, so deferred loading would
+add an interaction delay rather than meaningfully reduce startup cost. The
+existing icon package supplies Grid; no dependency was added. Removing the
+Grid disclosure and making pack controls always visible offsets part of the cost.

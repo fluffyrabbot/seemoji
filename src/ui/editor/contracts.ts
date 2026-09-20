@@ -11,6 +11,7 @@ import type {
 } from '../../application/workspaceController';
 import type {
   Appearance,
+  CanvasLayout,
   BrushStroke,
   MaskStroke,
   RasterLayer,
@@ -162,6 +163,7 @@ export interface EditorPageCommands {
     readonly ungroupSelection: () => void;
   };
   readonly canvas: {
+    readonly changeLayout: (layout: CanvasLayout) => void;
     readonly changeTool: (tool: EditorTool) => void;
     readonly changeBrush: (brush: BrushSettings) => void;
     readonly changeSettings: (settings: CanvasSettings) => void;

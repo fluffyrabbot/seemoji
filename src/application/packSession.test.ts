@@ -82,6 +82,19 @@ describe('pack session', () => {
     expect(workspace.design).toBe(DEFAULT_DESIGN);
   });
 
+  it.each(['comic4', 'comic6'] as const)('spawns added emojis smaller in %s without changing replacement sizing', async (layout) => {
+    const workspace = new WorkspaceStub();
+    workspace.dispatch({ type: 'set-canvas-layout', layout });
+    const session = new PackSession({ catalog: catalog(async () => true), preference: preference(),
+      workspace, validateSource: async () => {} });
+    await session.pick('😄', { kind: 'add', layerId: 'small' });
+    const added = workspace.design.layers.find((layer) => layer.id === 'small')!;
+    expect(added.transform.scaleX).toBeLessThan(0.4);
+    expect(added.transform.x).toBeLessThan(0);
+    await session.pick('😀', { kind: 'replace', layerId: 'small' });
+    expect(workspace.design.layers.find((layer) => layer.id === 'small')!.transform).toEqual(added.transform);
+  });
+
   it('does not insert a placeholder or history entry when added artwork fails validation', async () => {
     const workspace = new WorkspaceStub();
     const session = new PackSession({

@@ -2,6 +2,7 @@ import {
   DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   type Appearance,
+  type CanvasLayout,
   type BrushStroke,
   type DesignDocument,
   type DesignDocumentV1,
@@ -205,9 +206,9 @@ function decodeDesignDocumentV1(document: Record<string, unknown>): DecodeResult
 
 export function migrateDesignDocumentV1(document: DesignDocumentV1): DesignDocument {
   return {
-    version: 3,
+    version: 4,
     groups: [],
-    canvas: { background: 'transparent' },
+    canvas: { layout: 'default' },
     layers: [
       {
         id: 'emoji-1',
@@ -580,7 +581,7 @@ function decodeSelectionGroups(value: unknown, layers: readonly SceneLayer[]): D
   return error ? { ok: false, error } : { ok: true, value: groups };
 }
 
-/** V1 recipes and V2 scenes explicitly migrate into the current grouped scene format. */
+/** Legacy recipes and scenes explicitly migrate to a default canvas layout. */
 export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocument> {
   const document = record(value);
   if (!document) return { ok: false, error: 'design document must be an object' };
@@ -588,14 +589,19 @@ export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocumen
     const decoded = decodeDesignDocumentV1(document);
     return decoded.ok ? { ok: true, value: migrateDesignDocumentV1(decoded.value) } : decoded;
   }
-  if (document.version === 2 || document.version === 3) {
-    const scene = decodeDesignDocumentV2(document);
+  if (document.version === 2 || document.version === 3 || document.version === 4) {
+    const layout = document.version === 4 ? record(document.canvas)?.layout : 'default';
+    if (layout !== 'default' && layout !== 'comic4' && layout !== 'comic6') {
+      return { ok: false, error: 'canvas.layout must be default, comic4, or comic6' };
+    }
+    const scene = decodeDesignDocumentV2(document.version === 4
+      ? { ...document, canvas: { background: 'transparent' } } : document);
     if (!scene.ok) return scene;
     const groups = document.version === 2
       ? { ok: true as const, value: [] }
       : decodeSelectionGroups(document.groups, scene.value.layers);
     return groups.ok
-      ? { ok: true, value: { ...scene.value, version: 3, groups: groups.value } }
+      ? { ok: true, value: { ...scene.value, version: 4, canvas: { layout: layout as CanvasLayout }, groups: groups.value } }
       : groups;
   }
   return {

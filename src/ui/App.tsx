@@ -692,6 +692,7 @@ export default function App({ services, experiments }: Props) {
       ungroup: (groupId) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'remove-groups', groupIds: [groupId] }),
     },
     canvas: {
+      changeLayout: (layout) => dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-canvas-layout', layout }),
       changeTool: setTool,
       changeBrush: setBrush,
       changeSettings: setCanvasSettings,

@@ -1,4 +1,4 @@
-import type { BrushStroke, LayerBounds, MaskStroke, RasterRun } from '../domain/design';
+import type { CanvasLayout, BrushStroke, LayerBounds, MaskStroke, RasterRun } from '../domain/design';
 import type { LinearMatrix, RenderPlan } from '../domain/renderPlan';
 
 export type RenderLayerInput =
@@ -57,6 +57,7 @@ export type RenderLayerInput =
     };
 
 export interface RenderSceneInput {
+  readonly layout: CanvasLayout;
   readonly size: number;
   /** Back-to-front paint order. */
   readonly layers: readonly RenderLayerInput[];

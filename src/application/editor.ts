@@ -6,6 +6,7 @@ import {
   getLayer,
   replaceLayer,
   type Appearance,
+  type CanvasLayout,
   type BrushStroke,
   type DesignDocument,
   type MaskStroke,
@@ -38,6 +39,7 @@ export interface EditorState {
 type GroupedAction = { readonly historyGroup?: string };
 
 export type EditorAction =
+  | { readonly type: 'set-canvas-layout'; readonly layout: CanvasLayout }
   | { readonly type: 'load-design'; readonly design: DesignDocument }
   | ({ readonly type: 'replace-design'; readonly design: DesignDocument } & GroupedAction)
   | ({
@@ -160,6 +162,8 @@ export const canRedo = (state: EditorState): boolean => state.future.length > 0;
 
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
+    case 'set-canvas-layout':
+      return recordDesign(state, { ...state.design, canvas: { layout: action.layout } });
     case 'load-design':
       return hasDesignCapacity(action.design) && !selectionGroupError(action.design.groups, action.design.layers)
         ? { ...state, design: action.design, past: [], future: [], historyGroup: null,

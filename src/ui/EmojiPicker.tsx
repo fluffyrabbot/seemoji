@@ -296,11 +296,7 @@ export default function EmojiPicker({
         Some artwork couldn’t load. <button type="button" onClick={() => setRetry(retry + 1)}>Retry artwork</button>
       </p>}
       {notice && <p className="picker-status" role="alert">{notice}</p>}
-      <details className="picker-pack-details">
-        <summary>Artwork pack: {packName}{snapshot.style ? ` · ${snapshot.style}` : ''}</summary>
-        <p className="picker-target">{target.kind === 'replace'
-          ? 'Changing packs updates the selected emoji’s artwork.'
-          : 'Choose the artwork for the next emoji you add.'}</p>
+      <div className="picker-packs" role="group" aria-label="Artwork pack">
         <div className="pack-selectors">
           <label>
             <span>Artwork pack</span>
@@ -317,14 +313,14 @@ export default function EmojiPicker({
             </select>
           </label>}
           {selectedVersion && selectedVersion.styles.length > 1 && <label>
-            <span>Artwork style</span>
+            <span>Style</span>
             <select aria-label="Emoji library style" value={snapshot.style} disabled={busy}
               onChange={(event) => void changeStyle(event.target.value as PackStyle)}>
               {selectedVersion.styles.map((style) => <option key={style} value={style}>{style}</option>)}
             </select>
           </label>}
         </div>
-      </details>
+      </div>
     </div>
   );
 }

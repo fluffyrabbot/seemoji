@@ -201,6 +201,7 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               }
             }}
             onBrushChange={commands.canvas.changeBrush}
+            onCanvasLayoutChange={commands.canvas.changeLayout}
             onCanvasSettingsChange={commands.canvas.changeSettings}
             onPaintStroke={commands.canvas.paintStroke}
             onMaskStroke={commands.canvas.maskStroke}

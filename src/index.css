@@ -182,9 +182,9 @@ input[type='text'], input[type='number'], input:not([type]), select {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-top: 0.75rem;
+  margin-top: 0;
 }
-.pack-selectors label { flex: 1 1 10rem; min-width: 0; color: #b7bac5; font-size: 0.72rem; }
+.pack-selectors label { flex: 1 1 5rem; min-width: 0; color: #b7bac5; font-size: 0.72rem; }
 .pack-selectors label span { display: block; margin-bottom: 0.25rem; }
 .pack-selectors select { width: 100%; min-width: 0; }
 
@@ -348,13 +348,6 @@ input[type='text'], input[type='number'], input:not([type]), select {
 .viewport-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 0.3rem; max-width: 100%; }
 .viewport-actions output { width: 42px; color: #a6a9b5; text-align: center; font-size: 0.72rem; }
 .viewport-actions > button:not(.compare-button) { min-width: 30px; padding-inline: 0.35rem; }
-.canvas-settings { position: relative; color: #a6a9b5; font-size: 0.7rem; }
-.canvas-settings summary { cursor: pointer; }
-.canvas-settings[open] {
-  display: grid; gap: 0.4rem; flex: 1 1 100%; border: 1px solid #343640;
-  border-radius: 8px; background: #1b1d24; padding: 0.5rem;
-}
-.canvas-settings label { display: flex; align-items: center; gap: 0.3rem; }
 .paint-toolbar {
   display: flex;
   align-items: stretch;
@@ -698,8 +691,8 @@ input[type='text'], input[type='number'], input:not([type]), select {
 .emoji-grid button { min-height: 34px; border-radius: 7px; }
 .emoji-grid img { width: 26px; height: 26px; }
 .picker-artwork-placeholder { color: #adb2c7; font-size: 0.7rem; }
-.picker-pack-details { border-top: 1px solid #343640; padding-top: 0.8rem; margin-top: 0.9rem; font-size: 0.78rem; }
-.picker-pack-details summary, .more-controls summary { cursor: pointer; color: #c5c9da; }
+.picker-packs { border-top: 1px solid #343640; padding-top: 0.6rem; margin-top: 0.6rem; font-size: 0.78rem; }
+.more-controls summary { cursor: pointer; color: #c5c9da; }
 .pack-selectors label { font-size: 0.75rem; }
 .pack-selectors select { font-size: 0.8rem; }
 .inspector-heading { gap: 0.5rem; }
@@ -761,8 +754,6 @@ input[type='text'], input[type='number'], input:not([type]), select {
   .viewport-actions > button { font-size: 0.68rem; padding: 0.25rem 0.35rem; }
   .viewport-actions > button:not(.compare-button) { min-width: 25px; }
   .compare-button { display: none; }
-  .canvas-settings { position: static; }
-  .canvas-settings[open] { position: absolute; z-index: 9; left: 1.5rem; right: 1.5rem; top: 150px; }
   .preview-stage { margin: 0.45rem 0; }
   .preview-viewport { width: min(100%, clamp(150px, 27dvh, 250px)); border-radius: 9px; }
   .canvas-world { width: 100%; }
@@ -895,7 +886,7 @@ input[type='text'], input[type='number'], input:not([type]), select {
 .canvas-tools-shell > .group-edit-banner { position: absolute; inset: 0; }
 @media (width <= 760px) {
   .canvas-tools { display: block; padding: .25rem; }
-  .primary-tools { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .2rem; }
+  .primary-tools { display: grid; grid-template-columns: 1fr 1fr 1.35fr repeat(4, minmax(0, 1fr)); gap: .2rem; }
   .canvas-tools button { min-width: 0; padding: .4rem .1rem; font-size: .68rem; min-height: 36px; }
   .more-tools-toggle { display: block; }
   .secondary-tools { display: none; padding-top: .3rem; }
@@ -926,3 +917,18 @@ input[type='text'], input[type='number'], input:not([type]), select {
 
 .canvas-text-transform { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 5; }
 input.canvas-text-editor { width: 100%; height: 100%; line-height: 1; pointer-events: auto; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 2px solid #aab2ff; background: transparent; min-width: 0; box-sizing: border-box; }
+
+.canvas-layouts { display: flex; gap: .2rem; }
+.canvas-layouts button { display: inline-flex; align-items: center; justify-content: center; padding: .35rem; }
+.canvas-layouts button[aria-pressed='true'] { border-color: #7c87ff; background: #3a3e57; color: #fff; }
+
+@media (width <= 360px) {
+  .preview-panel .panel-heading { flex-wrap: wrap; }
+  .viewport-actions { width: 100%; justify-content: space-between; }
+}
+
+.pack-selectors label:first-child { flex-basis: 100%; }
+.pack-selectors select { padding: .35rem .4rem; }
+@media (width <= 760px) {
+  .output-context-preview { position: relative; top: auto; left: auto; margin: .35rem 0 0; }
+}

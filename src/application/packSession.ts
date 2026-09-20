@@ -1,3 +1,4 @@
+import { emojiSpawnTransform } from '../domain/canvasLayout';
 import type { EditorAction } from './editor';
 import { DEFAULT_EMOJI_LAYER, getLayer, type DesignDocument } from '../domain/design';
 import { DESIGN_CAPACITY } from '../domain/designCapacity';
@@ -191,6 +192,7 @@ export class PackSession {
       }
       this.#workspace.dispatch({ type: 'add-layer', layer: {
         ...DEFAULT_EMOJI_LAYER,
+        transform: emojiSpawnTransform(this.#workspace.getSnapshot().editor.design.canvas.layout),
         id: target.layerId,
         name: `${grapheme} Emoji`,
         source,

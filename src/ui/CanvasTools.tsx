@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { MousePointer2, Type, Brush, Eraser, PaintBucket, Hand, RectangleHorizontal,
-  Circle, Slash, Plus, ChevronDown, Ellipsis, type LucideIcon } from 'lucide-react';
+  Circle, Slash, Grid3X3, Plus, ChevronDown, Ellipsis, type LucideIcon } from 'lucide-react';
 import type { EditorTool } from './editor/contracts';
 
 type ShapeTool = 'rectangle' | 'ellipse' | 'line';
@@ -11,12 +11,14 @@ const SHAPES: Record<ShapeTool, { label: string; icon: LucideIcon; shortcut: str
 };
 interface Props {
   readonly tool: EditorTool;
+  readonly showGrid: boolean;
+  readonly onToggleGrid: () => void;
   readonly groupName: string | null;
   readonly onFinishGroupEdit: () => void;
   readonly onToolChange: (tool: EditorTool) => void;
 }
 
-export default function CanvasTools({ tool, groupName, onFinishGroupEdit, onToolChange }: Props) {
+export default function CanvasTools({ tool, showGrid, onToggleGrid, groupName, onFinishGroupEdit, onToolChange }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [shapesOpen, setShapesOpen] = useState(false);
   const [lastShape, setLastShape] = useState<ShapeTool>('rectangle');
@@ -58,6 +60,9 @@ export default function CanvasTools({ tool, groupName, onFinishGroupEdit, onTool
         </div>
         {mode('brush', 'Brush', 'B', Brush)}
         {mode('eraser', 'Erase', 'E', Eraser)}
+        <button type="button" aria-label="Grid" title="Toggle grid" aria-pressed={showGrid} onClick={onToggleGrid}>
+          <Grid3X3 size={19} aria-hidden="true" /><span className="tool-label">Grid</span>
+        </button>
         <button type="button" className="more-tools-toggle" aria-label="More" title="More tools"
           aria-expanded={moreOpen} aria-controls="secondary-tools" data-active={['restore', 'fill', 'pan'].includes(tool)}
           onClick={() => setMoreOpen(!moreOpen)}><Ellipsis size={19} aria-hidden="true" /><span className="tool-label">More</span></button>

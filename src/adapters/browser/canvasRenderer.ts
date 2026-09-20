@@ -1,3 +1,4 @@
+import { comicPanels } from '../../domain/canvasLayout';
 import type { BrushStroke, MaskStroke, StrokePoint } from '../../domain/design';
 import { toTopLeftOrigin, type AffineMatrix, type RenderPlan } from '../../domain/renderPlan';
 import type {
@@ -255,6 +256,16 @@ export class BrowserCanvasRenderer implements RendererPort {
     const canvas = createCanvas(scene.size);
     const destination = context(canvas);
     const warnings: string[] = [];
+    if (scene.layout !== 'default') {
+      destination.fillStyle = '#ffffff';
+      destination.fillRect(0, 0, scene.size, scene.size);
+      destination.strokeStyle = '#111111';
+      destination.lineWidth = scene.size * 0.006;
+      for (const panel of comicPanels(scene.layout)) {
+        destination.strokeRect(panel.x * scene.size, panel.y * scene.size,
+          panel.width * scene.size, panel.height * scene.size);
+      }
+    }
 
     for (const layer of scene.layers) {
       if (layer.kind === 'emoji' ? !layer.plan.visible : !layer.visible) continue;

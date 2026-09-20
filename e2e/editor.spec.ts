@@ -133,6 +133,7 @@ const downloadedPng = async (page: Page) => {
       width: image.width,
       height: image.height,
       center: [...context.getImageData(image.width / 2, image.height / 2, 1, 1).data],
+      panelBorder: [...context.getImageData(Math.floor(image.width * 0.04), Math.floor(image.height * 0.1), 1, 1).data],
     };
   }, data);
 };
@@ -195,7 +196,7 @@ const openDetails = async (page: Page, selector: string) => {
   if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
 };
 const moreControls = (page: Page) => openDetails(page, '.more-controls');
-const artworkPacks = (page: Page) => openDetails(page, '.picker-pack-details');
+const artworkPacks = async (page: Page) => { await expect(page.getByLabel('Emoji library', { exact: true })).toBeVisible(); };
 const chooseTool = async (page: Page, tool: string) => {
   const tools = page.getByLabel('Canvas tools', { exact: true });
   const button = tools.getByRole('button', { name: tool === 'Eraser' ? 'Erase' : tool, exact: true });
@@ -210,7 +211,7 @@ const exportProject = async (page: Page) => {
   if (!path) throw new Error('editable project download has no local path');
   return JSON.parse(await readFile(path, 'utf8')) as {
     readonly name: string;
-    readonly design: { readonly version: number; readonly groups: readonly {
+    readonly design: { readonly canvas: { readonly layout: string }; readonly version: number; readonly groups: readonly {
       readonly id: string; readonly name: string; readonly layerIds: readonly string[];
     }[]; readonly layers: readonly {
       readonly id: string;
@@ -1149,10 +1150,8 @@ test('autosaves projects, exports and imports JSON, and exposes workspace shortc
   await page.keyboard.press('ControlOrMeta+G');
   await expect(page.locator('.notice')).toContainText('Grouped 2 layers');
 
-  await page.getByText('Grid', { exact: true }).click();
-  await page.getByLabel('Show grid').check();
-  await page.getByLabel('Grid divisions').selectOption('16');
-  await expect(page.locator('.grid-overlay line')).toHaveCount(30);
+  await page.getByRole('button', { name: 'Grid', exact: true }).click();
+  await expect(page.locator('.grid-overlay line')).toHaveCount(14);
 
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   await page.reload();
@@ -1875,7 +1874,7 @@ test('keeps named groups through history, reload, duplication, and project impor
   await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
   await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
   const named = await exportProject(page);
-  expect(named.design.version).toBe(3);
+  expect(named.design.version).toBe(4);
   expect(named.design.groups).toHaveLength(1);
   expect(named.design.groups[0]!.name).toBe('Badge');
   await page.getByRole('button', { name: /Undo/ }).click();
@@ -2113,11 +2112,10 @@ test('requires a new style import preview after another tab changes the library'
 });
 
 for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside-object drag exits group editing (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('seemoji:canvas-settings:v1', JSON.stringify({ snap: false })));
+  await page.reload();
   await createBadgeGroup(page);
   const before = await exportProject(page);
-  await page.locator('.canvas-settings summary').click();
-  await page.getByRole('checkbox', { name: 'Snap', exact: true }).uncheck();
-  await page.locator('.canvas-settings summary').click();
   if (mobile) {
     await page.setViewportSize({ width: 414, height: 896 });
     await page.getByRole('button', { name: 'Objects', exact: true }).click();
@@ -2305,4 +2303,34 @@ test('shape modifiers update the preview without moving the pointer and commit m
   const shape = project.design.layers.find(({ kind }) => kind === 'shape');
   expect(shape?.bounds?.width).toBeCloseTo(width);
   expect(shape?.bounds?.height).toBeCloseTo(width);
+});
+
+test('comic canvases persist and export white panels, use smaller emoji spawns, and keep Grid independent', async ({ page }) => {
+  const layouts = page.getByRole('group', { name: 'Canvas layout', exact: true });
+  await expect(layouts.getByRole('button', { name: 'Default canvas', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const grid = page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Grid', exact: true });
+  await grid.click();
+  await expect(grid).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.grid-overlay line')).toHaveCount(14);
+  await grid.click();
+  await layouts.getByRole('button', { name: '4-panel comic', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copy PNG', exact: true })).toBeEnabled();
+  expect(await previewPixel(page, 0, 0)).toEqual([255, 255, 255, 255]);
+  // The central gutter stays white in the PNG too (hide the original large emoji).
+  await page.getByRole('button', { name: 'Hide “Emoji”', exact: true }).click();
+  const comicPng = await downloadedPng(page);
+  expect(comicPng.center).toEqual([255, 255, 255, 255]);
+  expect(comicPng.panelBorder[0]).toBeLessThan(150);
+  await layouts.getByRole('button', { name: '6-panel comic', exact: true }).click();
+  await page.getByRole('button', { name: 'Add emoji', exact: true }).click();
+  await pickEmoji(page, '🍕');
+  const project = await exportProject(page);
+  expect(project.design.canvas.layout).toBe('comic6');
+  expect(project.design.layers.at(-1)?.transform.scaleX).toBe(0.25);
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(layouts.getByRole('button', { name: '6-panel comic', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await layouts.getByRole('button', { name: 'Default canvas', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copy PNG', exact: true })).toBeEnabled();
+  expect((await previewPixel(page, 0, 0))[3]).toBe(0);
 });

@@ -146,7 +146,14 @@ export interface DesignDocumentV3 extends Omit<DesignDocumentV2, 'version'> {
   readonly groups: readonly SelectionGroup[];
 }
 
-export type DesignDocument = DesignDocumentV3;
+export type CanvasLayout = 'default' | 'comic4' | 'comic6';
+
+export interface DesignDocumentV4 extends Omit<DesignDocumentV3, 'version' | 'canvas'> {
+  readonly version: 4;
+  readonly canvas: { readonly layout: CanvasLayout };
+}
+
+export type DesignDocument = DesignDocumentV4;
 
 export const DESIGN_LIMITS = {
   x: [-0.5, 0.5],
@@ -202,8 +209,8 @@ export const DEFAULT_EMOJI_LAYER: EmojiLayer = {
 };
 
 export const DEFAULT_DESIGN: DesignDocument = {
-  version: 3,
-  canvas: { background: 'transparent' },
+  version: 4,
+  canvas: { layout: 'default' },
   layers: [DEFAULT_EMOJI_LAYER],
   groups: [],
 };
