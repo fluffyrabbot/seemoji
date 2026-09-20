@@ -1025,6 +1025,18 @@ export default function Preview({
                 </g>
               </svg>
             )}
+            <svg className="text-boundaries" viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
+              {design.layers.filter((layer) => layer.kind === 'text' && layer.visible).map((layer) => {
+                const displayed = showOriginal && selectedLayerIds.includes(layer.id)
+                  ? { ...layer, transform: DEFAULT_TRANSFORM } : layer;
+                const points = layerWorldCorners(displayed).map((point) =>
+                  `${point.x * previewRenderSize},${point.y * previewRenderSize}`).join(' ');
+                return <g key={layer.id} data-text-layer={layer.id} fill="none">
+                  <polygon points={points} stroke="#ffffff" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                  <polygon points={points} stroke="#232635" strokeWidth="1.25" vectorEffect="non-scaling-stroke" />
+                </g>;
+              })}
+            </svg>
             {!showOriginal && !editingTextId && tool === 'select' && (selectedLayers.length > 0 || marquee) && (
               <svg className="transform-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">

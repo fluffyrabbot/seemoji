@@ -1,7 +1,5 @@
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
-import type { SavedStylesProps } from './SavedStyles';
-import type { AppServices } from '../application/services';
 import type { RenderCoordinator } from '../application/renderCoordinator';
 import {
   DEFAULT_TRANSFORM,
@@ -121,7 +119,6 @@ export interface ControlsProps {
   readonly design: DesignDocument;
   readonly selectedLayerIds: readonly string[];
   readonly renderer: RenderCoordinator;
-  readonly emojiStyles: AppServices['emojiStyles'];
   readonly proportionsLocked: boolean;
   readonly onProportionsLockedChange: (locked: boolean) => void;
   readonly onTransformsChange: (updates: readonly LayerTransformUpdate[], historyGroup?: string) => void;
@@ -169,7 +166,6 @@ function SelectionControls({
   design,
   selectedLayerIds,
   renderer,
-  emojiStyles,
   proportionsLocked,
   onProportionsLockedChange,
   onTransformsChange,
@@ -181,17 +177,6 @@ function SelectionControls({
 }: ControlsProps) {
   const [Advanced, setAdvanced] = useState<ComponentType<AdvancedControlsProps> | null>(null);
   const [advancedFailed, setAdvancedFailed] = useState(false);
-  const [Styles, setStyles] = useState<ComponentType<SavedStylesProps> | null>(null);
-  const [stylesFailed, setStylesFailed] = useState(false);
-  const loadStyles = async () => {
-    setStylesFailed(false);
-    try {
-      const module = await import('./SavedStyles');
-      setStyles(() => module.default);
-    } catch {
-      setStylesFailed(true);
-    }
-  };
   const loadAdvanced = async () => {
     setAdvancedFailed(false);
     try {
@@ -269,19 +254,6 @@ function SelectionControls({
         </div>
         <p className="preset-description">Preview your emoji, then apply a style. Each click is one undo.</p>
       </fieldset>}
-
-      <details className="saved-styles-details" onToggle={(event) => {
-        if (event.currentTarget.open && !Styles) void loadStyles();
-      }}>
-        <summary>Saved styles</summary>
-        {Styles ? <Styles loadLibrary={emojiStyles} selectedLayer={emoji ?? null}
-          onApply={(transform, appearance) => {
-            if (emoji) onApplyStyle(emoji.id, transform, appearance);
-          }} />
-          : stylesFailed ? <p role="alert">Couldn’t load saved styles. <button type="button"
-            onClick={() => void loadStyles()}>Try again</button></p>
-            : <p role="status">Loading saved styles…</p>}
-      </details>
 
       {single?.kind === 'text' && <div className="inspector-object-fields">
         <label><span>Text</span><input id="editor-text" type="text" maxLength={500} value={single.text}

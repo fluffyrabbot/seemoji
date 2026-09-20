@@ -133,6 +133,7 @@ const downloadedPng = async (page: Page) => {
       width: image.width,
       height: image.height,
       center: [...context.getImageData(image.width / 2, image.height / 2, 1, 1).data],
+      textBorder: [...context.getImageData(Math.round(image.width * 0.2), Math.round(image.height * 0.5), 1, 1).data],
       panelBorder: [...context.getImageData(Math.floor(image.width * 0.04), Math.floor(image.height * 0.1), 1, 1).data],
     };
   }, data);
@@ -1823,49 +1824,6 @@ test('mirrored group rotation matches inspector, canvas handles, and exported pi
   }
 });
 
-test('saves a reusable style across reload and applies it only to the selected emoji', async ({ page }) => {
-  await page.getByRole('button', { name: 'Tilt', exact: true }).click();
-  await page.getByRole('button', { name: 'Sticker', exact: true }).click();
-  await page.getByRole('button', { name: 'Mirror', exact: true }).click();
-  await moreControls(page);
-  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-12');
-  await openDetails(page, '.saved-styles-details');
-  await page.getByRole('textbox', { name: 'Style name', exact: true }).fill('Party sticker');
-  await page.getByRole('button', { name: 'Save style', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toBeVisible();
-  const original = (await exportProject(page)).design.layers[0]!;
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
-  await openDetails(page, '.saved-styles-details');
-  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toBeVisible();
-  await findEmoji(page, '😎');
-  await page.getByRole('button', { name: 'Add emoji', exact: true }).click();
-  await emojiChoice(page, '😎').click();
-  await moreControls(page);
-  await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('18');
-  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).fill('9');
-  await page.getByRole('spinbutton', { name: 'Position Y', exact: true }).blur();
-  const before = await exportProject(page);
-  const target = before.design.layers.find(({ id }) => id !== original.id)!;
-  await openDetails(page, '.saved-styles-details');
-  await page.getByRole('button', { name: 'Apply Party sticker', exact: true }).click();
-  const after = await exportProject(page);
-  expect(after.design.layers.find(({ id }) => id === original.id)).toEqual(original);
-  expect(after.design.layers.find(({ id }) => id === target.id)).toEqual({
-    ...target, transform: { ...original.transform, x: target.transform.x, y: target.transform.y },
-    appearance: original.appearance,
-  });
-  await page.getByRole('button', { name: /Undo/ }).click();
-  expect((await exportProject(page)).design).toEqual(before.design);
-  await openDetails(page, '.saved-styles-details');
-  await page.getByRole('button', { name: 'Delete Party sticker', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toHaveCount(0);
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
-  await openDetails(page, '.saved-styles-details');
-  await expect(page.getByRole('button', { name: 'Apply Party sticker', exact: true })).toHaveCount(0);
-});
-
 test('keeps named groups through history, reload, duplication, and project import', async ({ page }) => {
   await placeShape(page, 'rectangle');
   await placeShape(page, 'ellipse');
@@ -1994,123 +1952,6 @@ test('scopes canvas and keyboard selection while editing a group and recovers de
   await expect(page.locator('.layer-item.selected')).toHaveCount(2);
 });
 
-interface TestStyleBackup {
-  readonly format: string;
-  readonly version: number;
-  readonly exportedAt: number;
-  readonly styles: readonly {
-    readonly id: string; readonly name: string;
-    readonly transform: Record<string, number | boolean>;
-    readonly appearance: Record<string, unknown>;
-  }[];
-  readonly omissions: readonly { readonly id: string | null; readonly error: string }[];
-}
-const saveNamedStyle = async (page: Page, name: string) => {
-  await openDetails(page, '.saved-styles-details');
-  await page.getByRole('textbox', { name: 'Style name', exact: true }).fill(name);
-  await page.getByRole('button', { name: 'Save style', exact: true }).click();
-  await expect(page.getByRole('button', { name: `Apply ${name}`, exact: true })).toBeVisible();
-};
-const exportStyles = async (page: Page): Promise<TestStyleBackup> => {
-  await openDetails(page, '.saved-styles-details');
-  const pending = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export styles', exact: true }).click();
-  const path = await (await pending).path();
-  if (!path) throw new Error('Style backup download has no path');
-  return JSON.parse(await readFile(path, 'utf8')) as TestStyleBackup;
-};
-const chooseStyleBackup = async (page: Page, backup: unknown) => {
-  await page.getByLabel('Import styles', { exact: true }).setInputFiles({
-    name: 'styles.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)),
-  });
-};
-
-test('backs up and restores styles without an emoji selection and previews duplicate names', async ({ page }) => {
-  await page.getByRole('button', { name: 'Tilt', exact: true }).click();
-  await page.getByRole('button', { name: 'Sticker', exact: true }).click();
-  await saveNamedStyle(page, 'Badge');
-  const stage = page.getByLabel(/Interactive emoji canvas/);
-  await stage.focus();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
-  const original = await exportStyles(page);
-  expect(original).toMatchObject({ format: 'seemoji-styles', version: 1, omissions: [] });
-  expect(original.styles.map(({ name }) => name)).toEqual(['Badge']);
-  await expect(page.getByRole('textbox', { name: 'Style name', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Delete Badge', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Apply Badge', exact: true })).toHaveCount(0);
-  await chooseStyleBackup(page, original);
-  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('Badge');
-  await expect(page.getByRole('button', { name: 'Apply Badge', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  const restored = await exportStyles(page);
-  expect(restored.styles).toHaveLength(1);
-  expect(restored.styles[0]!.id).not.toBe(original.styles[0]!.id);
-  expect(restored.styles[0]!.transform).toEqual(original.styles[0]!.transform);
-  expect(restored.styles[0]!.appearance).toEqual(original.styles[0]!.appearance);
-  await chooseStyleBackup(page, original);
-  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('Badge (2)');
-  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
-  expect((await exportStyles(page)).styles).toHaveLength(1);
-  await chooseStyleBackup(page, original);
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Apply Badge (2)', exact: true })).toBeVisible();
-  const mixed = { ...original, styles: [...original.styles,
-    { ...original.styles[0]!, id: 'incoming-new-look', name: 'New look' }] };
-  await chooseStyleBackup(page, mixed);
-  await page.getByRole('combobox', { name: 'Duplicate names', exact: true }).selectOption({ label: 'Skip matching names' });
-  await expect(page.getByRole('region', { name: 'Import preview', exact: true })).toContainText('New look');
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  const merged = await exportStyles(page);
-  expect(merged.styles.map(({ name }) => name).sort()).toEqual(['Badge', 'Badge (2)', 'New look']);
-  expect(new Set(merged.styles.map(({ id }) => id)).size).toBe(3);
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
-  expect((await exportStyles(page)).styles).toEqual(merged.styles);
-});
-
-test('invalid style backups clear the previous import preview and never partially import', async ({ page }) => {
-  await saveNamedStyle(page, 'Original');
-  const backup = await exportStyles(page);
-  const incoming = { ...backup, styles: [{ ...backup.styles[0]!, id: 'valid-incoming', name: 'Incoming' }] };
-  await chooseStyleBackup(page, incoming);
-  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
-  await chooseStyleBackup(page, { ...incoming, styles: [...incoming.styles,
-    { ...incoming.styles[0]!, id: 'broken-incoming', name: 'Broken', transform: { ...incoming.styles[0]!.transform, scaleX: 0 } }] });
-  await expect(page.getByRole('alert').filter({ hasText: /scaleX|range/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toHaveCount(0);
-  expect((await exportStyles(page)).styles).toEqual(backup.styles);
-  await page.getByLabel('Import styles', { exact: true }).setInputFiles({
-    name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{not-json'),
-  });
-  await expect(page.getByRole('alert').filter({ hasText: /JSON/i })).toBeVisible();
-  expect((await exportStyles(page)).styles).toEqual(backup.styles);
-  await chooseStyleBackup(page, incoming);
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  expect((await exportStyles(page)).styles.map(({ name }) => name).sort()).toEqual(['Incoming', 'Original']);
-});
-
-test('requires a new style import preview after another tab changes the library', async ({ page, context }) => {
-  await saveNamedStyle(page, 'Badge');
-  const backup = await exportStyles(page);
-  await chooseStyleBackup(page, backup);
-  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
-  const second = await context.newPage();
-  await mockArtwork(second);
-  await second.goto('/');
-  await expect(second.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
-  await saveNamedStyle(second, 'From another tab');
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  await expect(page.getByRole('alert').filter({ hasText: /changed|preview/i }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Apply Badge (2)', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Refresh import preview', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  const restored = await exportStyles(page);
-  expect(restored.styles.map(({ name }) => name).sort()).toEqual(['Badge', 'Badge (2)', 'From another tab']);
-  await second.close();
-});
-
 for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside-object drag exits group editing (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('seemoji:canvas-settings:v1', JSON.stringify({ snap: false })));
   await page.reload();
@@ -2156,42 +1997,6 @@ for (const mobile of [false, true]) test(`keeps the canvas fixed when an outside
     expect(after.design.layers.find(({ id }) => id === layer.id)).toEqual(layer);
   }
 });
-
-test('recovers an unreadable style with an invalid identity before retrying import', async ({ page }) => {
-  await saveNamedStyle(page, 'Original');
-  const backup = await exportStyles(page);
-  await page.evaluate(async () => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const open = indexedDB.open('seemoji-styles');
-      open.onsuccess = () => resolve(open.result);
-      open.onerror = () => reject(open.error);
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction('styles', 'readwrite');
-        transaction.objectStore('styles').add({ id: 123, name: 'Unreadable' });
-        transaction.oncomplete = () => resolve();
-        transaction.onabort = () => reject(transaction.error);
-      });
-    } finally { database.close(); }
-  });
-  await page.getByRole('button', { name: 'Refresh styles', exact: true }).click();
-  const recoveredBackup = await exportStyles(page);
-  expect(recoveredBackup.styles).toEqual(backup.styles);
-  expect(recoveredBackup.omissions).toEqual([{ id: null, error: expect.any(String) }]);
-  await chooseStyleBackup(page, backup);
-  await expect(page.getByRole('alert').filter({ hasText: /unreadable/i }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Confirm import', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: /Delete unreadable style/ }).click();
-  await expect(page.getByRole('button', { name: /Delete unreadable style/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Refresh import preview', exact: true }).click();
-  await page.getByRole('button', { name: 'Confirm import', exact: true }).click();
-  const restored = await exportStyles(page);
-  expect(restored.omissions).toEqual([]);
-  expect(restored.styles.map(({ name }) => name).sort()).toEqual(['Original', 'Original (2)']);
-  expect(restored.styles.find(({ name }) => name === 'Original')).toEqual(backup.styles[0]);
-});
-
 
 test('unified toolbar focuses new text and keeps secondary modes when More closes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -2333,4 +2138,27 @@ test('comic canvases persist and export white panels, use smaller emoji spawns, 
   await layouts.getByRole('button', { name: 'Default canvas', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Copy PNG', exact: true })).toBeEnabled();
   expect((await previewPixel(page, 0, 0))[3]).toBe(0);
+});
+
+
+test('text boundaries stay visible while typing and deselected on comic canvases but never export', async ({ page }) => {
+  await page.getByRole('button', { name: 'Hide “Emoji”', exact: true }).click();
+  await placeText(page);
+  const boundary = page.locator('.text-boundaries g');
+  await expect(boundary).toHaveCount(1);
+  await expect(boundary.locator('polygon')).toHaveCount(2);
+  await expect(boundary.locator('polygon').last()).toHaveAttribute('stroke', '#232635');
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
+  await page.keyboard.press('Enter');
+  const stage = page.getByLabel(/Interactive emoji canvas/);
+  await stage.focus();
+  await stage.press('Escape');
+  await expect(page.locator('.layer-item.selected')).toHaveCount(0);
+  await expect(boundary).toHaveCount(1);
+  expect((await downloadedPng(page)).textBorder[3]).toBe(0);
+  await page.getByRole('button', { name: '4-panel comic', exact: true }).click();
+  await expect(boundary).toHaveCount(1);
+  expect((await downloadedPng(page)).textBorder).toEqual([255, 255, 255, 255]);
+  await page.getByRole('button', { name: 'Hide “Text”', exact: true }).click();
+  await expect(boundary).toHaveCount(0);
 });

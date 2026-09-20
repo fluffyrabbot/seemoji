@@ -841,8 +841,6 @@ input[type='text'], input[type='number'], input:not([type]), select {
   .control-row { margin: 0.2rem 0; }
 }
 
-.saved-styles-details { margin: 0.8rem 0; border-top: 1px solid #3b4054; padding-top: 0.7rem; }
-.saved-styles-details > summary { cursor: pointer; font-size: 0.85rem; color: #c7cce0; }
 .selection-groups { margin: 0.65rem 0; display: grid; gap: 0.4rem; }
 .selection-groups h3 { margin: 0; font-size: 0.75rem; font-weight: var(--font-weight-emphasis); color: #acb4ce; }
 .selection-group { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.3rem; padding: 0.45rem; border: 1px solid #424963; border-radius: 8px; background: #292d3c; }
@@ -916,7 +914,7 @@ input[type='text'], input[type='number'], input:not([type]), select {
 }
 
 .canvas-text-transform { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 5; }
-input.canvas-text-editor { width: 100%; height: 100%; line-height: 1; pointer-events: auto; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 2px solid #aab2ff; background: transparent; min-width: 0; box-sizing: border-box; }
+input.canvas-text-editor { width: 100%; height: 100%; line-height: 1; pointer-events: auto; margin: 0; padding: 0; border: 0; border-radius: 0; outline: none; background: transparent; min-width: 0; box-sizing: border-box; }
 
 .canvas-layouts { display: flex; gap: .2rem; }
 .canvas-layouts button { display: inline-flex; align-items: center; justify-content: center; padding: .35rem; }
@@ -932,3 +930,5 @@ input.canvas-text-editor { width: 100%; height: 100%; line-height: 1; pointer-ev
 @media (width <= 760px) {
   .output-context-preview { position: relative; top: auto; left: auto; margin: .35rem 0 0; }
 }
+
+.text-boundaries { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 6; }

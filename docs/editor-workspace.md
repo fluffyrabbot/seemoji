@@ -132,7 +132,7 @@ not change the scene. Documents still contain at least one emoji object.
 
 The compact picker starts with popular emoji and successful session recents. Search accepts
 names, keywords, and complete pasted emoji; the full name catalog loads on first search
-interaction. **See all** expands the collection, and the **Artwork pack** disclosure exposes
+interaction. **See all** expands the collection, and the always-visible **Artwork pack** controls expose
 pack/version/style choices. Search failures can be retried without changing the design.
 
 Quick styles render the current canonical artwork. Original restores color and transforms
@@ -140,25 +140,13 @@ while preserving position; Squish preserves size while changing aspect; Tilt set
 angle; Sticker adds a white edge. Styles can be reapplied without accumulating distortion.
 Detailed properties load only after **More editing controls** opens.
 
-**Saved styles** opens a separate browser library of up to 64 named emoji looks.
-Saving and applying a look requires one selected emoji; backing up or importing
-the library is available with any selection. **Export styles** downloads a
-`seemoji-styles` version 1 JSON backup with every readable style and an explicit
-report of unreadable records that were omitted. Those records remain in browser
-storage until explicitly removed. **Delete unreadable style** also works when
-the stored identity is invalid. It checks the observed record again in the deletion
-transaction; if another tab repaired or replaced it, nothing is deleted and the
-library refreshes for review.
+Text boundaries remain visible for every visible text object, with contrasting white
+and dark strokes. They track the object's transform during editing, selection, and
+comic layout changes. These are editor guides and never enter the render/export graph.
 
-**Import styles** validates the entire file before showing the proposed names and
-counts. **Keep both (rename)** assigns available numbered names; **Skip matching
-names** excludes duplicates, using the same Unicode-normalized name comparison
-as saving. Cancel writes nothing. Confirm assigns fresh identities and adds the
-whole batch in one transaction. Invalid data, capacity limits, write errors, or a
-library changed by another tab cannot partially import; refresh the preview after
-resolving the reported problem. Backups are limited to 256 KiB. Style backups and
-project/workspace archives are separate so reusable looks travel independently
-of individual designs.
+The Saved styles disclosure and its runtime loading path have been removed. Existing
+library records are not deleted. The standalone style data/repository modules remain
+outside the application bundle for compatibility and recovery tooling.
 
 On phones, **Emoji**, **Objects**, and **Edit** switch the independently scrolling lower
 panel while the canvas and Copy/Download actions remain in view. **Projects** opens local

@@ -236,7 +236,6 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             design={model.editor.design}
             selectedLayerIds={model.editor.selectedLayerIds}
             renderer={model.renderer}
-            emojiStyles={model.emojiStyles}
             proportionsLocked={model.proportionsLocked}
             onProportionsLockedChange={commands.controls.changeProportionsLocked}
             onTransformsChange={commands.canvas.changeTransforms}

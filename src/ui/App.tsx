@@ -793,7 +793,6 @@ export default function App({ services, experiments }: Props) {
       catalog: services.catalog,
       renderer: services.renderer,
       assetDelivery: services.assetDelivery,
-      emojiStyles: services.emojiStyles,
     };
   }
 

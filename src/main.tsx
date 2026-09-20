@@ -40,17 +40,6 @@ const experiments = new ExperimentRuntime({
   eventSink: new NullProductEventSink(),
 });
 
-let emojiStyles: ReturnType<AppServices['emojiStyles']> | null = null;
-const loadEmojiStyles: AppServices['emojiStyles'] = () => {
-  emojiStyles ??= Promise.all([
-    import('./application/emojiStyleLibrary'),
-    import('./adapters/browser/indexedDbEmojiStyleRepository'),
-  ]).then(([{ EmojiStyleLibrary }, { IndexedDbEmojiStyleRepository }]) =>
-    new EmojiStyleLibrary(new IndexedDbEmojiStyleRepository(), { fileExport }),
-  ).catch((cause: unknown) => { emojiStyles = null; throw cause; });
-  return emojiStyles;
-};
-
 const services: AppServices = {
   renderer,
   clipboard,
@@ -66,7 +55,6 @@ const services: AppServices = {
     validateSource: (source) => renderer.validateSource(source),
   }),
   assetDelivery: new AssetDelivery({ clipboard, fileExport, events: experiments }),
-  emojiStyles: loadEmojiStyles,
 };
 
 const root = document.getElementById('root');

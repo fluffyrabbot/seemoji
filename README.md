@@ -39,10 +39,10 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-206,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
-unreachable chunks (at most 38,000 raw bytes and 13,800 gzip-9 bytes). It also
+205,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
+unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
-the full emoji search catalog, and saved-style storage loaded only on interaction. See
+and the full emoji search catalog loaded only on interaction. See
 [JavaScript bundle budget](docs/bundle-budget.md) for the graph classification,
 measurements, and policy for changing either ceiling.
 
@@ -182,17 +182,10 @@ edge. Changing from 48px to 256px changes resolution while preserving compositio
 Group moves, scaling, and rotation apply one constrained operation to the entire
 selection, preserving spacing and mirror behavior at the editable position limits.
 
-The inspector's **Saved styles** library stores named emoji transforms and effects
-in a separate IndexedDB capability. Applying a style preserves the selected emoji's
-position, artwork, identity, and masks, and is one undoable edit. The library loads
-only when opened. **Export styles** creates a portable JSON backup independently
-of the active selection. **Import styles** validates the complete file and previews
-incoming names before any write. Keep both gives incoming duplicates unique names;
-Skip matching names retains the existing entries. Confirmation inserts fresh
-identities in one transaction against the previewed library snapshot, so a
-concurrent edit requires a new preview and a failed import cannot partially restore.
-Backups explicitly report unreadable records that were omitted. Project and style
-backups remain separate, and imports leave existing styles intact.
+Text boxes have persistent, contrasting editing guides, including on comic canvases.
+These guides do not render into exported PNGs. The Saved styles inspector has been
+removed; existing saved-style storage is left intact and its standalone data codecs
+and repository remain available for recovery tooling.
 
 Artwork comes from eight write-once snapshots published at
 `fluffyrabbot/seemoji-packs`: Twemoji, Noto Emoji, Fluent Emoji Color/Flat/High Contrast,
@@ -227,7 +220,6 @@ surprise file download.
 - Rectangle, ellipse, line, text, and tolerance-aware flood-fill layers
 - Shift-click and marquee multi-selection, group transforms, snapping, alignment, and distribution
 - Individual group member editing with persistent group identity and undo
-- Portable saved-style backups with duplicate-name previews and atomic restoration
 - Named autosaved IndexedDB projects, atomic multi-tab conflict resolution, starred quick access, template duplication, strict JSON import/export, and workspace archives
 - Visual history navigation and keyboard shortcuts for tools, selection, duplication, grouping, and deletion
 - Internal layer copy/paste with duplicate-at-offset behavior

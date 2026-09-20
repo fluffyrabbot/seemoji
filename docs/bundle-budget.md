@@ -7,8 +7,8 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 206,000 | 64,000 |
-| Deferred | 38,000 | 13,800 |
+| Initial | 205,000 | 64,000 |
+| Deferred | 12,000 | 4,500 |
 
 Both limits are independent. Total JavaScript is informational; these gates
 cap it at 231,000 raw bytes and 72,800 gzip-9 bytes. Each emitted asset is
@@ -214,3 +214,14 @@ small synchronous drawing and toolbar operations, so deferred loading would
 add an interaction delay rather than meaningfully reduce startup cost. The
 existing icon package supplies Grid; no dependency was added. Removing the
 Grid disclosure and making pack controls always visible offsets part of the cost.
+
+
+### Persistent text boundaries and removal of Saved styles UI
+
+Initial JavaScript moves from 205,142 raw / 63,717 gzip-9 bytes to 204,253 raw /
+63,009 gzip-9 bytes. Deferred JavaScript drops from 37,518 raw / 13,632 gzip-9
+bytes to 11,062 raw / 4,325 gzip-9 bytes. Saved styles UI, service wiring, and
+lazy imports are removed; standalone persistence codecs remain outside the bundle.
+Text boundaries reuse the scene geometry and stay in the editor's SVG overlays.
+The initial raw ceiling drops to 205,000 bytes; its compressed ceiling stays
+64,000. Deferred ceilings drop to 12,000 raw / 4,500 gzip-9 bytes.

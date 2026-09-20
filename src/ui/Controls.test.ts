@@ -19,7 +19,6 @@ const setup = async (overrides: Partial<ControlsProps> = {}) => {
     design: { ...DEFAULT_DESIGN, layers: [DEFAULT_EMOJI_LAYER, textLayer] },
     selectedLayerIds: ['caption'],
     renderer: { render: vi.fn(() => new Promise(() => undefined)) } as unknown as RenderCoordinator,
-    emojiStyles: vi.fn(() => new Promise<never>(() => undefined)),
     proportionsLocked: true, onProportionsLockedChange: vi.fn(), onTransformsChange: vi.fn(),
     onAppearanceChange: vi.fn(), onApplyStyle: vi.fn(), onUpdateLayer: vi.fn(), onCommit: vi.fn(), onReset: vi.fn(),
     ...overrides,
@@ -42,6 +41,7 @@ describe('selection-aware Controls', () => {
     expect(container.textContent).not.toContain('Quick styles');
     expect(container.textContent).not.toContain('Color and edge');
     expect(container.textContent).toContain('Text color');
+    expect(container.textContent).not.toContain('Saved styles');
     button(container, 'Rotate 180°').click();
     expect(props.onTransformsChange).toHaveBeenCalledWith([
       { layerId: 'caption', transform: { ...DEFAULT_TRANSFORM, rotate: 180 } },
@@ -68,18 +68,6 @@ describe('selection-aware Controls', () => {
     expect(container.querySelector('input')).toBeNull();
     expect(container.textContent).toContain('Select an object');
   });
-
-  it.each([[], [textLayer.id], [DEFAULT_EMOJI_LAYER.id, textLayer.id]].map((selectedLayerIds) => ({ selectedLayerIds })))(
-    'opens the backup library without requiring a single emoji selection: $selectedLayerIds', async ({ selectedLayerIds }) => {
-      const { container, props } = await setup({ selectedLayerIds });
-      const disclosure = container.querySelector<HTMLDetailsElement>('.saved-styles-details')!;
-      expect(disclosure).not.toBeNull();
-      disclosure.open = true;
-      disclosure.dispatchEvent(new Event('toggle'));
-      await vi.waitFor(() => expect(props.emojiStyles).toHaveBeenCalled());
-      expect(props.onApplyStyle).not.toHaveBeenCalled();
-    },
-  );
 
   it('loads exact controls only after disclosure and keeps their updates on the selected object', async () => {
     const { container, props } = await setup();

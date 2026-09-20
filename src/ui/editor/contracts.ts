@@ -3,7 +3,7 @@ import type { EditorState, ExportSize } from '../../application/editor';
 import type { PackSessionSnapshot } from '../../application/packSession';
 import type { RenderCoordinator } from '../../application/renderCoordinator';
 import type { AssetDeliveryService } from '../../application/assetDelivery';
-import type { AppServices, StorageHealth } from '../../application/services';
+import type { StorageHealth } from '../../application/services';
 import type {
   ProjectConflictResolution,
   WorkspacePersistenceStatus,
@@ -93,7 +93,6 @@ export interface ReadyEditorPageViewModel {
   readonly catalog: EmojiPackCatalog;
   readonly renderer: RenderCoordinator;
   readonly assetDelivery: AssetDeliveryService;
-  readonly emojiStyles: AppServices['emojiStyles'];
 }
 
 export type EditorPageViewModel =
