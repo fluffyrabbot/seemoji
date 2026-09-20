@@ -43,6 +43,7 @@
     "wrangler": "4.127.0"
   },
   "dependencies": {
+    "lucide-react": "1.47.0",
     "preact": "^10.29.8"
   }
 }

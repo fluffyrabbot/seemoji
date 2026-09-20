@@ -43,19 +43,6 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
   const selectedLayer = model.editor.selectedLayerIds.length === 1
     ? model.editor.design.layers.find((layer) => layer.id === model.editor.selectedLayerIds[0])
     : null;
-  const addText = () => {
-    commands.layers.add('text');
-    setPanel('adjust');
-    requestAnimationFrame(() => {
-      const input = document.getElementById('editor-text') as HTMLInputElement | null;
-      input?.focus();
-      input?.select();
-    });
-  };
-  const chooseEmoji = () => {
-    setPanel('emoji');
-    requestAnimationFrame(() => document.getElementById('emoji-search')?.focus());
-  };
 
   return (
     <>
@@ -204,10 +191,19 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             brush={model.brush}
             canvasSettings={model.canvasSettings}
             onToolChange={commands.canvas.changeTool}
-            onAddText={addText}
-            onAddPaint={() => commands.layers.add('paint')}
-            onAddShape={(shape) => { commands.layers.add(shape); setPanel('adjust'); }}
-            onChooseEmoji={chooseEmoji}
+            onAddPaint={commands.layers.addPaint}
+            onPlaceLayer={(layer) => {
+              commands.layers.place(layer);
+              setPanel('adjust');
+              if (layer.kind === 'text') {
+                commands.canvas.changeTool('select');
+                requestAnimationFrame(() => {
+                  const input = document.getElementById('editor-text') as HTMLInputElement | null;
+                  input?.focus();
+                  input?.select();
+                });
+              }
+            }}
             onBrushChange={commands.canvas.changeBrush}
             onCanvasSettingsChange={commands.canvas.changeSettings}
             onPaintStroke={commands.canvas.paintStroke}

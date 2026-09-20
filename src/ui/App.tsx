@@ -18,7 +18,6 @@ import type {
   WorkspaceSnapshot,
 } from '../application/workspaceController';
 import {
-  DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   getLayer,
   type DesignDocument,
@@ -562,25 +561,13 @@ export default function App({ services, experiments }: Props) {
     }));
   };
 
-  const addLayer = (kind: 'paint' | 'rectangle' | 'ellipse' | 'line' | 'text') => {
-    if (kind === 'paint') {
-      const layerId = crypto.randomUUID();
-      const paintLayers = editor.design.layers.filter((layer) => layer.kind === 'strokes');
-      dispatch({ type: 'add-stroke-layer', layerId, name: `Paint ${paintLayers.length + 1}` });
-      setTool('brush');
-      return;
-    }
-    const common = { id: crypto.randomUUID(), name: kind[0]!.toUpperCase() + kind.slice(1),
-      visible: true, opacity: 1, transform: DEFAULT_TRANSFORM, mask: [] } as const;
-    const layer: SceneLayer = kind === 'text'
-      ? { ...common, kind: 'text', bounds: { x: 0.2, y: 0.38, width: 0.6, height: 0.24 },
-          text: 'Text', fontSize: 0.18, color: brush.color, fontFamily: 'sans-serif', align: 'center' }
-      : { ...common, kind: 'shape', shape: kind, bounds: { x: 0.25, y: 0.3, width: 0.5, height: 0.4 },
-          fill: kind === 'line' ? null : brush.color,
-          stroke: kind === 'line' ? { color: brush.color, width: 0.025 } : null };
-    dispatch({ type: 'add-layer', layer });
-    setTool('select');
+  const addPaint = () => {
+    const layerId = crypto.randomUUID();
+    const paintLayers = editor.design.layers.filter((layer) => layer.kind === 'strokes');
+    dispatch({ type: 'add-stroke-layer', layerId, name: `Paint ${paintLayers.length + 1}` });
+    setTool('brush');
   };
+
 
   const shortcutActions = useRef({ saveNow, copySelection, pasteSelection,
     duplicateSelection, groupSelection, ungroupSelection, selectAllLayers, deleteSelectedLayers });
@@ -622,7 +609,7 @@ export default function App({ services, experiments }: Props) {
       if (event.shiftKey && key === 'e') { event.preventDefault(); setTool('restore'); return; }
       if (toolKey[key]) { event.preventDefault(); setTool(toolKey[key]!); return; }
       const createKey = { r: 'rectangle', o: 'ellipse', l: 'line', t: 'text' } as const;
-      if (key in createKey) { event.preventDefault(); addLayer(createKey[key as keyof typeof createKey]); }
+      if (key in createKey) { event.preventDefault(); setTool(createKey[key as keyof typeof createKey]); }
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -676,7 +663,8 @@ export default function App({ services, experiments }: Props) {
       changeOpacity: (layerId, opacity, historyGroup) =>
         dispatchForEditorSession(session.editorSessionEpoch, { type: 'set-layer-opacity', layerId, opacity, historyGroup }),
       commit: () => dispatchForEditorSession(session.editorSessionEpoch, { type: 'commit-history-group' }),
-      add: addLayer,
+      addPaint,
+      place: (layer) => dispatch({ type: 'add-layer', layer }),
       update: (layer, historyGroup) => dispatchForEditorSession(session.editorSessionEpoch, {
         type: 'update-layer',
         layer,

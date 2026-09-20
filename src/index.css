@@ -906,3 +906,20 @@ input[type='text'], input[type='number'], input:not([type]), select {
 @media (width <= 320px) {
   .primary-tools > button { font-size: .62rem; padding-inline: 0; }
 }
+.canvas-tools button { display: inline-flex; align-items: center; justify-content: center; gap: .3rem; }
+.canvas-tools .more-tools-toggle { display: none; }
+.tool-icon { position: relative; display: inline-flex; flex: none; }
+.restore-badge { position: absolute; right: -3px; bottom: -3px; background: #1b1d24; border-radius: 50%; }
+.shape-tools { display: flex; align-items: stretch; }
+.shape-tools > button:first-child { border-radius: 8px 0 0 8px; }
+.shape-tools > .shape-toggle { width: 18px; min-width: 18px; padding-inline: 0; border-radius: 0 8px 8px 0; border-left: 0; }
+.shape-options button { justify-content: start; }
+.interactive-canvas.tool-text { cursor: text; }
+.interactive-canvas.tool-rectangle, .interactive-canvas.tool-ellipse, .interactive-canvas.tool-line { cursor: crosshair; }
+@media (width <= 760px) {
+  .canvas-tools .more-tools-toggle { display: inline-flex; }
+  .canvas-tools .tool-label { display: none; }
+  .canvas-tools button { min-height: 40px; }
+  .shape-tools > button:first-child { flex: 1; width: auto; }
+  .shape-tools > .shape-toggle { min-width: 12px; width: 12px; }
+}

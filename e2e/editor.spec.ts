@@ -155,8 +155,32 @@ const emojiChoice = (page: Page, emoji: string) => page.locator('.emoji-grid but
   has: page.locator(`img`),
 }).and(page.getByRole('button', { name: new RegExp(`${emoji}$`, 'u') }));
 
+const showEmojiPicker = async (page: Page) => {
+  const tab = page.getByLabel('Editing panels', { exact: true }).getByRole('button', { name: 'Emoji', exact: true });
+  if (await tab.isVisible()) await tab.click();
+  await emojiSearch(page).focus();
+};
+const placeText = async (page: Page) => {
+  await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Text', exact: true }).click();
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!canvas) throw new Error('Missing canvas');
+  await page.mouse.click(canvas.x + canvas.width * 0.2, canvas.y + canvas.height * 0.38);
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toBeFocused();
+};
+const placeShape = async (page: Page, shape: string) => {
+  await page.getByRole('button', { name: 'Shape options', exact: true }).click();
+  await page.getByRole('button', { name: `Use ${shape}`, exact: true }).click();
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!canvas) throw new Error('Missing canvas');
+  await page.mouse.move(canvas.x + canvas.width * 0.25, canvas.y + canvas.height * 0.3);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * 0.75, canvas.y + canvas.height * 0.7, { steps: 5 });
+  await page.mouse.up();
+  await chooseTool(page, 'Select');
+};
+
 const findEmoji = async (page: Page, emoji: string) => {
-  await page.getByRole('button', { name: 'Choose emoji', exact: true }).click();
+  await showEmojiPicker(page);
   await emojiSearch(page).fill(emoji);
   await expect(emojiChoice(page, emoji)).toBeEnabled();
 };
@@ -193,6 +217,7 @@ const exportProject = async (page: Page) => {
       readonly kind: string;
       readonly name: string;
       readonly text?: string;
+      readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
       readonly source?: { readonly grapheme: string };
       readonly appearance?: {
         readonly hue: number; readonly saturation: number; readonly brightness: number;
@@ -760,15 +785,12 @@ test('renames, duplicates, fades, and transforms a complete paint layer', async 
 });
 
 test('creates structured layers, multi-selects, aligns, group-transforms, and flood-fills', async ({ page }) => {
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add rectangle' }).click();
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add ellipse' }).click();
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add line' }).click();
-  await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
-  await page.getByLabel('Text', { exact: true }).fill('Hello');
-  await expect(page.getByLabel('Text', { exact: true })).toHaveValue('Hello');
+  await placeShape(page, 'rectangle');
+  await placeShape(page, 'ellipse');
+  await placeShape(page, 'line');
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Text', exact: true }).fill('Hello');
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Hello');
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toBeVisible();
   await expect(page.locator('.layer-select').filter({ hasText: 'Ellipse' })).toBeVisible();
   await expect(page.locator('.layer-select').filter({ hasText: 'Line' })).toBeVisible();
@@ -1091,8 +1113,7 @@ test('captures accepted edits synchronously when pagehide follows in the same ta
 
 test('autosaves projects, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
   await page.getByLabel('Project name').fill('Sticker study');
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add rectangle' }).click();
+  await placeShape(page, 'rectangle');
   await runProjectAction(page, 'Save now');
   await expect(page.getByLabel('Open project').locator('option')).toContainText(['Open…', 'Sticker study']);
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
@@ -1478,9 +1499,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
     await expect(page.getByRole('heading', { name: 'Layers', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Find your emoji' })).toBeHidden();
     await assertPinnedPreview();
-    await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
+    await placeText(page);
     await expect(tabs.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await page.getByLabel('Text', { exact: true }).fill('hello');
+    await page.getByRole('textbox', { name: 'Text', exact: true }).fill('hello');
     await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('24');
     await assertPinnedPreview();
     await moreControls(page);
@@ -1492,7 +1513,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
       return Math.round(controlsRect.top - tabsRect.bottom);
     });
     expect(panelGap).toBeLessThanOrEqual(16);
-    await page.getByRole('button', { name: 'Choose emoji', exact: true }).click();
+    await showEmojiPicker(page);
     await expect(emojiSearch(page)).toBeFocused();
     await assertPinnedPreview();
   });
@@ -1515,8 +1536,8 @@ test('searches by meaning, applies Squish, and copies the resulting PNG', async 
 
 test('adds text, rotates only the selected text, and undoes or resets without deleting objects', async ({ page }) => {
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('12');
-  await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
-  await page.getByLabel('Text', { exact: true }).fill('hello');
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Text', exact: true }).fill('hello');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
   let project = await exportProject(page);
   expect(project.design.layers.find(({ kind }) => kind === 'emoji')?.transform.rotate).toBe(12);
@@ -1576,12 +1597,10 @@ test('deselects on blank canvas and selects an unselected object with the same g
 });
 
 test('moves every grouped object on the first drag of an unselected group member', async ({ page }) => {
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await placeShape(page, 'rectangle');
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-12');
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await placeShape(page, 'ellipse');
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('12');
   await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
@@ -1618,7 +1637,7 @@ test('moves every grouped object on the first drag of an unselected group member
   expect((await exportProject(page)).design).toEqual(before.design);
 });
 
-for (const tool of ['Brush', 'Fill'] as const) {
+for (const tool of ['Brush', 'Fill', 'Rectangle', 'Text'] as const) {
   test(`pinches and pans with two touches in ${tool} without committing artwork`, async ({ page, context, browserName }) => {
     test.skip(browserName !== 'chromium', 'Real simultaneous touch pointers require the Chromium CDP touch input API.');
     const pageErrors: string[] = [];
@@ -1642,9 +1661,9 @@ for (const tool of ['Brush', 'Fill'] as const) {
     try {
       // The first finger may draft a brush stroke, but a fill must wait for release.
       await touch('touchStart', [point(11, 0.4, 0.5)]);
-      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
       await touch('touchMove', [point(11, 0.42, 0.5)]);
-      if (tool === 'Brush') await expect(page.locator('.draft-overlay')).toBeVisible();
+      if (tool !== 'Fill') await expect(page.locator('.draft-overlay')).toBeVisible();
       await touch('touchStart', [point(11, 0.42, 0.5), point(22, 0.65, 0.5)]);
       await expect(page.locator('.draft-overlay')).toHaveCount(0);
       await touch('touchMove', [point(11, 0.25, 0.5), point(22, 0.85, 0.5)]);
@@ -1656,7 +1675,7 @@ for (const tool of ['Brush', 'Fill'] as const) {
       await touch('touchMove', [point(11, 0.3, 0.55)]);
       await expect(page.locator('.canvas-world')).not.toHaveAttribute('style', beforePan!);
       await touch('touchEnd', []);
-      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
       await expect(page.getByRole('button', { name: /Undo/ })).toBeDisabled();
       await expect(page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: tool, exact: true }))
         .toHaveAttribute('aria-pressed', 'true');
@@ -1669,11 +1688,12 @@ for (const tool of ['Brush', 'Fill'] as const) {
       const nextPoint = { id: 33, x: nextBounds.x + nextBounds.width * 0.5,
         y: nextBounds.y + nextBounds.height * 0.5, radiusX: 1, radiusY: 1, force: 0.5 };
       await touch('touchStart', [nextPoint]);
-      await expect(page.locator('.layer-item')).toHaveCount(1);
+      await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
+      if (tool === 'Rectangle') await touch('touchMove', [{ ...nextPoint, x: nextPoint.x + 40, y: nextPoint.y + 30 }]);
       await touch('touchEnd', []);
-      await expect(page.locator('.layer-item')).toHaveCount(2);
+      await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(2);
       const afterTap = await exportProject(page);
-      expect(afterTap.design.layers[1]!.kind).toBe(tool === 'Brush' ? 'strokes' : 'raster');
+      expect(afterTap.design.layers[1]!.kind).toBe(tool === 'Brush' ? 'strokes' : tool === 'Fill' ? 'raster' : tool === 'Text' ? 'text' : 'shape');
       await page.getByRole('button', { name: /Undo/ }).click();
       expect((await exportProject(page)).design).toEqual(before.design);
       expect(pageErrors).toEqual([]);
@@ -1845,10 +1865,8 @@ test('saves a reusable style across reload and applies it only to the selected e
 });
 
 test('keeps named groups through history, reload, duplication, and project import', async ({ page }) => {
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await placeShape(page, 'rectangle');
+  await placeShape(page, 'ellipse');
   await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
   await page.getByRole('button', { name: 'Group', exact: true }).click();
   await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
@@ -1886,12 +1904,10 @@ test('keeps named groups through history, reload, duplication, and project impor
 });
 
 const createBadgeGroup = async (page: Page) => {
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await placeShape(page, 'rectangle');
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-15');
-  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
-  await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
+  await placeShape(page, 'ellipse');
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('15');
   await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
@@ -2179,11 +2195,11 @@ test('recovers an unreadable style with an invalid identity before retrying impo
 test('unified toolbar focuses new text and keeps secondary modes when More closes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const tools = page.getByLabel('Canvas tools', { exact: true });
-  await tools.getByRole('button', { name: 'Add text', exact: true }).click();
+  await placeText(page);
   await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toBeFocused();
   await page.keyboard.type('Caption');
   await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Caption');
-  await tools.getByRole('button', { name: 'Choose emoji', exact: true }).click();
+  await showEmojiPicker(page);
   await expect(emojiSearch(page)).toBeFocused();
   await expect(page.getByRole('button', { name: 'Replace selected', exact: true })).toBeDisabled();
   await tools.getByRole('button', { name: 'More', exact: true }).click();
@@ -2198,4 +2214,42 @@ test('unified toolbar focuses new text and keeps secondary modes when More close
   await expect(page.getByRole('status').filter({ hasText: 'Drawing on Paint 1' })).toBeVisible();
   const project = await exportProject(page);
   expect(project.design.layers.filter(({ kind }) => kind === 'strokes')).toHaveLength(1);
+});
+
+
+test('placement tools arm without creating, preview reverse drags, and commit one undoable shape', async ({ page }) => {
+  const tools = page.getByLabel('Canvas tools', { exact: true });
+  await tools.getByRole('button', { name: 'Rectangle', exact: true }).click();
+  await expect(tools.getByRole('button', { name: 'Rectangle', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!canvas) throw new Error('Missing canvas');
+  const at = (x: number, y: number) => ({ x: canvas.x + x * canvas.width, y: canvas.y + y * canvas.height });
+  let point = at(0.8, 0.7);
+  await page.mouse.move(point.x, point.y); await page.mouse.down();
+  point = at(0.2, 0.25);
+  await page.mouse.move(point.x, point.y, { steps: 5 });
+  await expect(page.locator('.placement-preview')).toBeVisible();
+  await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.locator('.placement-preview')).toHaveCount(0);
+  await expect(tools.getByRole('button', { name: 'Rectangle', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const project = await exportProject(page);
+  const shape = project.design.layers.find(({ kind }) => kind === 'shape');
+  expect(shape?.bounds?.x).toBeCloseTo(0.2, 2);
+  expect(shape?.bounds?.y).toBeCloseTo(0.25, 2);
+  expect(shape?.bounds?.width).toBeCloseTo(0.6, 2);
+  expect(shape?.bounds?.height).toBeCloseTo(0.45, 2);
+  point = at(0.1, 0.1);
+  await page.mouse.move(point.x, point.y); await page.mouse.down();
+  point = at(0.4, 0.4);
+  await page.mouse.move(point.x, point.y);
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  await expect(page.locator('.placement-preview')).toHaveCount(0);
+  await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(2);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
+  await page.keyboard.press('t');
+  await expect(tools.getByRole('button', { name: 'Text', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Canvas layers').getByRole('listitem')).toHaveCount(1);
 });

@@ -7,7 +7,7 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 193,000 | 59,000 |
+| Initial | 203,000 | 64,000 |
 | Deferred | 38,000 | 13,800 |
 
 Both limits are independent. Total JavaScript is informational; these gates
@@ -164,3 +164,26 @@ deferred ceiling if its measured steady-state payload leaves durable unused
 capacity. When startup code grows, first move interaction-only work behind an
 explicit dynamic boundary; preserve the 184,000 / 56,000 initial ceiling unless
 measured user value and loading impact justify a reviewed new baseline.
+
+
+## Canvas placement and icon tools baseline
+
+The September 2026 placement change replaces immediate centered-object insertion
+with explicit Text/Rectangle/Ellipse/Line modes, live drag previews, cancellation,
+and one-gesture undo. The persistent toolbar uses named Lucide icon imports;
+the icon library is tree-shaken and no icon catalog is shipped.
+
+The verified predecessor (`162c9c9`) measured 192,641 raw / 58,902 gzip-9 bytes
+in the initial graph. Placement and icon tools measure 201,595 raw / 62,507
+gzip-9 bytes: +8,954 raw / +3,605 gzip-9. Deferred code measures 37,518 raw /
+13,629 gzip-9 bytes and retains its 38,000 / 13,800 limits. The new initial
+ceilings are 203,000 raw / 64,000 gzip-9 bytes.
+
+The toolbar icons render immediately, and placement shares the existing canvas
+pointer lifecycle, coordinate transforms, and undo commands. These belong in
+the initial editor graph. Removing the redundant emoji launcher and immediate
+creation paths offsets part of the change. Named imports keep the dependency
+boundary limited to the displayed icons; dynamically loading individual icons
+or the small placement geometry would add asynchronous states to basic editing
+without materially reducing the initial editor's required work. The extra
+transfer buys direct manipulation and consistent active-tool feedback.

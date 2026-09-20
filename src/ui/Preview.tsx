@@ -1,4 +1,5 @@
-import CanvasTools, { type ShapeKind } from './CanvasTools';
+import CanvasTools from './CanvasTools';
+import { createPlacedLayer, isPlacementTool, type PlacementTool } from './placement';
 import {
   useEffect,
   useLayoutEffect,
@@ -69,10 +70,8 @@ interface Props {
   readonly brush: BrushSettings;
   readonly canvasSettings: CanvasSettings;
   readonly onToolChange: (tool: EditorTool) => void;
-  readonly onAddText: () => void;
   readonly onAddPaint: () => void;
-  readonly onAddShape: (shape: ShapeKind) => void;
-  readonly onChooseEmoji: () => void;
+  readonly onPlaceLayer: (layer: SceneLayer) => void;
   readonly onBrushChange: (brush: BrushSettings) => void;
   readonly onCanvasSettingsChange: (settings: CanvasSettings) => void;
   readonly onPaintStroke: (layerId: string, stroke: BrushStroke, createLayerName?: string) => void;
@@ -160,10 +159,8 @@ export default function Preview({
   brush,
   canvasSettings,
   onToolChange,
-  onAddText,
-  onAddShape,
+  onPlaceLayer,
   onAddPaint,
-  onChooseEmoji,
   onBrushChange,
   onCanvasSettingsChange,
   onPaintStroke,
@@ -182,6 +179,12 @@ export default function Preview({
   const gesture = useRef<Gesture | null>(null);
   const draftRef = useRef<DraftStroke | null>(null);
   const marqueeRef = useRef<Marquee | null>(null);
+  const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; id: string; color: string } | null>(null);
+  const [placement, setPlacement] = useState<typeof placementRef.current>(null);
+  useLayoutEffect(() => {
+    placementRef.current = null;
+    setPlacement(null);
+  }, [tool, editingGroupId]);
   const gestureScope = useRef(editingGroupId);
   const [draft, setDraft] = useState<DraftStroke | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
@@ -193,6 +196,8 @@ export default function Preview({
     const wasTransforming = gesture.current !== null;
     gesture.current = null;
     draftRef.current = null;
+    placementRef.current = null;
+    setPlacement(null);
     marqueeRef.current = null;
     setDraft(null);
     setMarquee(null);
@@ -338,6 +343,8 @@ export default function Preview({
   const startTouchNavigation = (event: PointerEvent): boolean => {
     if (!beginTouch(event)) return false;
     draftRef.current = null;
+    placementRef.current = null;
+    setPlacement(null);
     marqueeRef.current = null;
     gesture.current = null;
     setDraft(null);
@@ -423,6 +430,18 @@ export default function Preview({
       const next = { pointerId: event.pointerId, start: point, current: point, additive: event.shiftKey };
       marqueeRef.current = next;
       setMarquee(next);
+      return;
+    }
+    if (isPlacementTool(tool)) {
+      const point = pointInCanvas(event);
+      if (!point || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) return;
+      event.preventDefault();
+      stageRef.current.focus({ preventScroll: true });
+      stageRef.current.setPointerCapture(event.pointerId);
+      const next = { tool, pointerId: event.pointerId, start: point, current: point,
+        id: crypto.randomUUID(), color: brush.color };
+      placementRef.current = next;
+      setPlacement(next);
       return;
     }
     if (tool === 'fill') return;
@@ -515,6 +534,12 @@ export default function Preview({
       setHoverSample(localPoint ? { point: localPoint, layerId: drawingLayer?.id ?? null } : null);
     }
     if (continuePan(event)) return;
+    if (placementRef.current?.pointerId === event.pointerId && worldPoint) {
+      const next = { ...placementRef.current, current: worldPoint };
+      placementRef.current = next;
+      setPlacement(next);
+      return;
+    }
     const activeMarquee = marqueeRef.current;
     if (activeMarquee?.pointerId === event.pointerId && worldPoint) {
       const next = { ...activeMarquee, current: worldPoint };
@@ -606,6 +631,17 @@ export default function Preview({
   const endGesture = (event: PointerEvent) => {
     if (endTouch(event)) return;
     if (endPan(event)) return;
+    const placed = placementRef.current;
+    if (placed?.pointerId === event.pointerId) {
+      const end = pointInCanvas(event) ?? placed.current;
+      placementRef.current = null;
+      setPlacement(null);
+      if (placed.tool === 'text' || Math.hypot(end.x - placed.start.x, end.y - placed.start.y)
+          * previewRenderSize * viewport.zoom >= 3) {
+        onPlaceLayer(createPlacedLayer(placed.tool, placed.start, end, placed.id, placed.color));
+      }
+      return;
+    }
     const activeMarquee = marqueeRef.current;
     if (activeMarquee?.pointerId === event.pointerId) {
       const left = Math.min(activeMarquee.start.x, activeMarquee.current.x);
@@ -667,6 +703,11 @@ export default function Preview({
   const cancelGesture = (event: PointerEvent) => {
     if (endTouch(event)) return;
     if (endPan(event)) return;
+    if (placementRef.current?.pointerId === event.pointerId) {
+      placementRef.current = null;
+      setPlacement(null);
+      return;
+    }
     if (draftRef.current?.pointerId === event.pointerId) {
       draftRef.current = null;
       setDraft(null);
@@ -730,7 +771,7 @@ export default function Preview({
       <div className="panel-heading">
         <div>
           <h2>Canvas</h2>
-          <p>Drag to move · corner to resize · round handle to rotate</p>
+          <p>{isPlacementTool(tool) ? tool === 'text' ? 'Click or drag to place text' : `Drag to create a ${tool}` : 'Drag to move · corner to resize · round handle to rotate'}</p>
         </div>
         <div className="viewport-actions">
           <button type="button" aria-label="Zoom out"
@@ -776,11 +817,10 @@ export default function Preview({
       </div>
 
       <CanvasTools tool={tool} groupName={editingGroup?.name ?? null}
-        onFinishGroupEdit={onFinishGroupEdit} onToolChange={onToolChange}
-        onChooseEmoji={onChooseEmoji} onAddText={onAddText} onAddShape={onAddShape} />
+        onFinishGroupEdit={onFinishGroupEdit} onToolChange={onToolChange} />
       <div className="paint-toolbar" aria-label="Tool settings"
-        hidden={tool === 'select' || tool === 'pan'}>
-        {tool !== 'select' && tool !== 'pan' && <p className="paint-target" role="status">
+        hidden={tool === 'select' || tool === 'pan' || isPlacementTool(tool)}>
+        {!isPlacementTool(tool) && tool !== 'select' && tool !== 'pan' && <p className="paint-target" role="status">
           {tool === 'fill' ? 'Fill samples all visible objects.'
             : tool === 'brush' ? drawingLayer ? `Drawing on ${drawingLayer.name}` : 'Drawing on a new paint layer'
               : selectedLayer ? `${tool === 'eraser' ? 'Erasing' : 'Restoring'} ${selectedLayer.name}`
@@ -896,6 +936,20 @@ export default function Preview({
                 })}
               </svg>
             )}
+            {placement && (() => {
+              const layer = createPlacedLayer(placement.tool, placement.start, placement.current, placement.id, placement.color);
+              if (layer.kind !== 'shape' && layer.kind !== 'text') return null;
+              const { x, y, width, height } = layer.bounds;
+              return <svg className="draft-overlay placement-preview" viewBox="0 0 1 1" aria-hidden="true">
+                <g transform={svgLayerTransform(layer, 1)} fill={layer.kind === 'shape' ? layer.fill ?? 'none' : 'none'}
+                  stroke={layer.kind === 'shape' ? layer.stroke?.color ?? layer.fill ?? '#ffffff' : '#aab2ff'}
+                  strokeWidth={layer.kind === 'shape' ? layer.stroke?.width ?? 0.003 : 0.003} opacity="0.65">
+                  {placement.tool === 'ellipse' ? <ellipse cx={x + width / 2} cy={y + height / 2} rx={width / 2} ry={height / 2} />
+                    : placement.tool === 'line' ? <line x1={x} y1={y} x2={x + width} y2={y + height} />
+                      : <rect x={x} y={y} width={width} height={height} />}
+                </g>
+              </svg>;
+            })()}
             {draft && (
               <svg className="draft-overlay"
                 viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">

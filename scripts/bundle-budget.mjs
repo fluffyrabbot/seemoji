@@ -5,8 +5,8 @@ import ts from 'typescript';
 
 export const JAVASCRIPT_BUDGETS = Object.freeze({
   initial: Object.freeze({
-    rawBytes: 193_000,
-    gzipBytes: 59_000,
+    rawBytes: 203_000,
+    gzipBytes: 64_000,
   }),
   deferred: Object.freeze({
     rawBytes: 38_000,

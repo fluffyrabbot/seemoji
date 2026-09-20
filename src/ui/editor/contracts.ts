@@ -1,3 +1,4 @@
+import type { PlacementTool } from '../placement';
 import type { EditorState, ExportSize } from '../../application/editor';
 import type { PackSessionSnapshot } from '../../application/packSession';
 import type { RenderCoordinator } from '../../application/renderCoordinator';
@@ -28,7 +29,7 @@ export type Notice = {
   readonly message: string;
 };
 
-export type EditorTool = 'select' | 'brush' | 'eraser' | 'restore' | 'fill' | 'pan';
+export type EditorTool = 'select' | 'brush' | 'eraser' | 'restore' | 'fill' | 'pan' | PlacementTool;
 
 export interface BrushSettings {
   readonly color: string;
@@ -98,7 +99,6 @@ export type EditorPageViewModel =
   | LoadingEditorPageViewModel
   | ReadyEditorPageViewModel;
 
-export type LayerKind = 'paint' | 'rectangle' | 'ellipse' | 'line' | 'text';
 export type Alignment = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 export type DistributionAxis = 'horizontal' | 'vertical';
 
@@ -150,7 +150,8 @@ export interface EditorPageCommands {
       historyGroup: string,
     ) => void;
     readonly commit: () => void;
-    readonly add: (kind: LayerKind) => void;
+    readonly addPaint: () => void;
+    readonly place: (layer: SceneLayer) => void;
     readonly update: (layer: SceneLayer, historyGroup?: string) => void;
     readonly align: (mode: Alignment) => void;
     readonly distribute: (axis: DistributionAxis) => void;
