@@ -284,7 +284,7 @@ function SelectionControls({
       </details>
 
       {single?.kind === 'text' && <div className="inspector-object-fields">
-        <label><span>Text</span><input type="text" maxLength={500} value={single.text}
+        <label><span>Text</span><input id="editor-text" type="text" maxLength={500} value={single.text}
           onChange={(event) => updateSingle({ ...single, text: event.target.value || ' ' }, 'text')}
           onBlur={onCommit} /></label>
         <label className="color-control"><span>Text color</span>

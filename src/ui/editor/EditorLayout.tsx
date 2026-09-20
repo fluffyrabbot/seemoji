@@ -46,6 +46,11 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
   const addText = () => {
     commands.layers.add('text');
     setPanel('adjust');
+    requestAnimationFrame(() => {
+      const input = document.getElementById('editor-text') as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    });
   };
   const chooseEmoji = () => {
     setPanel('emoji');
@@ -161,7 +166,6 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
               onMove={commands.layers.move}
               onRemove={commands.layers.remove}
               onDuplicate={commands.layers.duplicate}
-              onAdd={commands.layers.add}
               onAlign={commands.layers.align}
               onDistribute={commands.layers.distribute}
               onCopy={commands.layers.copySelection}
@@ -201,6 +205,8 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             canvasSettings={model.canvasSettings}
             onToolChange={commands.canvas.changeTool}
             onAddText={addText}
+            onAddPaint={() => commands.layers.add('paint')}
+            onAddShape={(shape) => { commands.layers.add(shape); setPanel('adjust'); }}
             onChooseEmoji={chooseEmoji}
             onBrushChange={commands.canvas.changeBrush}
             onCanvasSettingsChange={commands.canvas.changeSettings}

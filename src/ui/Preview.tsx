@@ -1,3 +1,4 @@
+import CanvasTools, { type ShapeKind } from './CanvasTools';
 import {
   useEffect,
   useLayoutEffect,
@@ -69,6 +70,8 @@ interface Props {
   readonly canvasSettings: CanvasSettings;
   readonly onToolChange: (tool: EditorTool) => void;
   readonly onAddText: () => void;
+  readonly onAddPaint: () => void;
+  readonly onAddShape: (shape: ShapeKind) => void;
   readonly onChooseEmoji: () => void;
   readonly onBrushChange: (brush: BrushSettings) => void;
   readonly onCanvasSettingsChange: (settings: CanvasSettings) => void;
@@ -158,6 +161,8 @@ export default function Preview({
   canvasSettings,
   onToolChange,
   onAddText,
+  onAddShape,
+  onAddPaint,
   onChooseEmoji,
   onBrushChange,
   onCanvasSettingsChange,
@@ -195,7 +200,6 @@ export default function Preview({
     if (wasTransforming) onTransformCommit();
   }, [editingGroupId, onTransformCommit]);
   const [showOriginal, setShowOriginal] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const lightPreviewRef = useRef<HTMLCanvasElement>(null);
   const darkPreviewRef = useRef<HTMLCanvasElement>(null);
   const suppressFill = useRef(false);
@@ -771,39 +775,11 @@ export default function Preview({
         </div>
       </div>
 
-      <div className="canvas-quick-actions">
-        {editingGroup ? <div className="group-edit-banner" role="status">
-          <strong title={`Editing group “${editingGroup.name}”`}>Editing group “{editingGroup.name}”</strong>
-          <span className="sr-only">Select individual members. Escape returns to the group.</span>
-          <button type="button" aria-label="Done editing group" title="Finish editing group (Escape)"
-            onClick={onFinishGroupEdit}>Done</button>
-        </div> : <>
-          <button type="button" onClick={onChooseEmoji}>Change emoji</button>
-          <button type="button" onClick={onAddText}>Add text</button>
-          <button type="button" aria-expanded={toolsOpen || tool !== 'select'}
-            aria-controls="drawing-tools" onClick={() => {
-              if (tool !== 'select') onToolChange('select');
-              setToolsOpen(!(toolsOpen || tool !== 'select'));
-            }}>Draw &amp; erase</button>
-        </>}
-      </div>
-      <div className="paint-toolbar" id="drawing-tools" aria-label="Canvas tools"
-        hidden={!toolsOpen && tool === 'select'}>
-        <div className="tool-buttons">
-          {(['select', 'brush', 'eraser', 'restore', 'fill', 'pan'] as const).map((candidate) => (
-            <button type="button" key={candidate} aria-pressed={tool === candidate}
-              onClick={() => onToolChange(candidate)}>
-              <span aria-hidden="true">
-                {candidate === 'select' ? '↖'
-                  : candidate === 'brush' ? '✎'
-                    : candidate === 'eraser' ? '⌫'
-                      : candidate === 'restore' ? '↺'
-                        : candidate === 'fill' ? '▨' : '✥'}
-              </span>
-              {candidate[0]!.toUpperCase() + candidate.slice(1)}
-            </button>
-          ))}
-        </div>
+      <CanvasTools tool={tool} groupName={editingGroup?.name ?? null}
+        onFinishGroupEdit={onFinishGroupEdit} onToolChange={onToolChange}
+        onChooseEmoji={onChooseEmoji} onAddText={onAddText} onAddShape={onAddShape} />
+      <div className="paint-toolbar" aria-label="Tool settings"
+        hidden={tool === 'select' || tool === 'pan'}>
         {tool !== 'select' && tool !== 'pan' && <p className="paint-target" role="status">
           {tool === 'fill' ? 'Fill samples all visible objects.'
             : tool === 'brush' ? drawingLayer ? `Drawing on ${drawingLayer.name}` : 'Drawing on a new paint layer'
@@ -812,6 +788,7 @@ export default function Preview({
         </p>}
         {(tool === 'brush' || tool === 'eraser' || tool === 'restore' || tool === 'fill') && (
           <div className="brush-settings">
+            {tool === 'brush' && <button type="button" onClick={onAddPaint}>New paint layer</button>}
             {(tool === 'brush' || tool === 'fill') && (
               <label className="brush-color">
                 <span>Color</span>

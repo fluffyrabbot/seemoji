@@ -156,7 +156,7 @@ const emojiChoice = (page: Page, emoji: string) => page.locator('.emoji-grid but
 }).and(page.getByRole('button', { name: new RegExp(`${emoji}$`, 'u') }));
 
 const findEmoji = async (page: Page, emoji: string) => {
-  await page.getByRole('button', { name: 'Change emoji', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose emoji', exact: true }).click();
   await emojiSearch(page).fill(emoji);
   await expect(emojiChoice(page, emoji)).toBeEnabled();
 };
@@ -174,8 +174,9 @@ const moreControls = (page: Page) => openDetails(page, '.more-controls');
 const artworkPacks = (page: Page) => openDetails(page, '.picker-pack-details');
 const chooseTool = async (page: Page, tool: string) => {
   const tools = page.getByLabel('Canvas tools', { exact: true });
-  if (!await tools.isVisible()) await page.getByRole('button', { name: 'Draw & erase', exact: true }).click();
-  await tools.getByRole('button', { name: tool, exact: true }).click();
+  const button = tools.getByRole('button', { name: tool === 'Eraser' ? 'Erase' : tool, exact: true });
+  if (!await button.isVisible()) await tools.getByRole('button', { name: 'More', exact: true }).click();
+  await button.click();
 };
 
 const exportProject = async (page: Page) => {
@@ -759,10 +760,13 @@ test('renames, duplicates, fades, and transforms a complete paint layer', async 
 });
 
 test('creates structured layers, multi-selects, aligns, group-transforms, and flood-fills', async ({ page }) => {
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add rectangle' }).click();
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add ellipse' }).click();
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add line' }).click();
-  await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
+  await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
   await page.getByLabel('Text', { exact: true }).fill('Hello');
   await expect(page.getByLabel('Text', { exact: true })).toHaveValue('Hello');
   await expect(page.locator('.layer-select').filter({ hasText: 'Rectangle' })).toBeVisible();
@@ -1087,6 +1091,7 @@ test('captures accepted edits synchronously when pagehide follows in the same ta
 
 test('autosaves projects, exports and imports JSON, and exposes workspace shortcuts', async ({ page }) => {
   await page.getByLabel('Project name').fill('Sticker study');
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add rectangle' }).click();
   await runProjectAction(page, 'Save now');
   await expect(page.getByLabel('Open project').locator('option')).toContainText(['Open…', 'Sticker study']);
@@ -1460,7 +1465,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
       await expect(canvas).toBeInViewport({ ratio: 1 });
       await expect(copy).toBeInViewport({ ratio: 1 });
       await expect(page.getByRole('button', { name: 'Download PNG', exact: true })).toBeInViewport({ ratio: 1 });
-      for (const button of await page.locator('.canvas-quick-actions > button').all()) {
+      for (const button of await page.locator('.primary-tools > button').all()) {
         await expect(button).toBeInViewport({ ratio: 1 });
         expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth
           && element.scrollHeight <= element.clientHeight)).toBe(true);
@@ -1473,7 +1478,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
     await expect(page.getByRole('heading', { name: 'Layers', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Find your emoji' })).toBeHidden();
     await assertPinnedPreview();
-    await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
+    await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
     await expect(tabs.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await page.getByLabel('Text', { exact: true }).fill('hello');
     await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('24');
@@ -1487,7 +1492,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
       return Math.round(controlsRect.top - tabsRect.bottom);
     });
     expect(panelGap).toBeLessThanOrEqual(16);
-    await page.getByRole('button', { name: 'Change emoji', exact: true }).click();
+    await page.getByRole('button', { name: 'Choose emoji', exact: true }).click();
     await expect(emojiSearch(page)).toBeFocused();
     await assertPinnedPreview();
   });
@@ -1510,7 +1515,7 @@ test('searches by meaning, applies Squish, and copies the resulting PNG', async 
 
 test('adds text, rotates only the selected text, and undoes or resets without deleting objects', async ({ page }) => {
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('12');
-  await page.locator('.canvas-quick-actions').getByRole('button', { name: 'Add text', exact: true }).click();
+  await page.getByLabel('Canvas tools', { exact: true }).getByRole('button', { name: 'Add text', exact: true }).click();
   await page.getByLabel('Text', { exact: true }).fill('hello');
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('35');
   let project = await exportProject(page);
@@ -1571,9 +1576,11 @@ test('deselects on blank canvas and selects an unselected object with the same g
 });
 
 test('moves every grouped object on the first drag of an unselected group member', async ({ page }) => {
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-12');
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('12');
@@ -1838,7 +1845,9 @@ test('saves a reusable style across reload and applies it only to the selected e
 });
 
 test('keeps named groups through history, reload, duplication, and project import', async ({ page }) => {
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
   await page.locator('.layer-select').filter({ hasText: 'Rectangle' }).click({ modifiers: ['Shift'] });
   await page.getByRole('button', { name: 'Group', exact: true }).click();
@@ -1877,9 +1886,11 @@ test('keeps named groups through history, reload, duplication, and project impor
 });
 
 const createBadgeGroup = async (page: Page) => {
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add rectangle', exact: true }).click();
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('-15');
+  await page.getByRole('button', { name: 'Shapes', exact: true }).click();
   await page.getByRole('button', { name: 'Add ellipse', exact: true }).click();
   await moreControls(page);
   await page.getByRole('spinbutton', { name: 'Position X', exact: true }).fill('15');
@@ -2162,4 +2173,29 @@ test('recovers an unreadable style with an invalid identity before retrying impo
   expect(restored.omissions).toEqual([]);
   expect(restored.styles.map(({ name }) => name).sort()).toEqual(['Original', 'Original (2)']);
   expect(restored.styles.find(({ name }) => name === 'Original')).toEqual(backup.styles[0]);
+});
+
+
+test('unified toolbar focuses new text and keeps secondary modes when More closes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const tools = page.getByLabel('Canvas tools', { exact: true });
+  await tools.getByRole('button', { name: 'Add text', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toBeFocused();
+  await page.keyboard.type('Caption');
+  await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Caption');
+  await tools.getByRole('button', { name: 'Choose emoji', exact: true }).click();
+  await expect(emojiSearch(page)).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Replace selected', exact: true })).toBeDisabled();
+  await tools.getByRole('button', { name: 'More', exact: true }).click();
+  await tools.getByRole('button', { name: 'Fill', exact: true }).click();
+  await tools.getByRole('button', { name: 'More', exact: true }).click();
+  await expect(page.getByLabel(/Interactive emoji canvas/)).toHaveAttribute('class', /tool-fill/);
+  await expect(tools.getByRole('button', { name: 'More', exact: true })).toHaveAttribute('data-active', 'true');
+  await tools.getByRole('button', { name: 'Select', exact: true }).click();
+  await expect(page.getByLabel('Tool settings', { exact: true })).toBeHidden();
+  await chooseTool(page, 'Brush');
+  await page.getByRole('button', { name: 'New paint layer', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Drawing on Paint 1' })).toBeVisible();
+  const project = await exportProject(page);
+  expect(project.design.layers.filter(({ kind }) => kind === 'strokes')).toHaveLength(1);
 });

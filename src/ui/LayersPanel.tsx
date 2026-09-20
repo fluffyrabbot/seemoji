@@ -9,7 +9,6 @@ interface Props {
   readonly onMove: (id: string, direction: 'forward' | 'backward') => void;
   readonly onRemove: (id: string) => void;
   readonly onDuplicate: (id: string) => void;
-  readonly onAdd: (kind: 'paint' | 'rectangle' | 'ellipse' | 'line' | 'text') => void;
   readonly onAlign: (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
   readonly onDistribute: (axis: 'horizontal' | 'vertical') => void;
   readonly onCopy: () => void;
@@ -32,7 +31,6 @@ export default function LayersPanel({
   onMove,
   onRemove,
   onDuplicate,
-  onAdd,
   onAlign,
   onDistribute,
   onCopy,
@@ -57,13 +55,6 @@ export default function LayersPanel({
         <div>
           <h2>Layers</h2>
           <p>Top layers paint in front.</p>
-        </div>
-        <div className="layer-create" aria-label="Create layer">
-          <button type="button" aria-label="Add paint layer" onClick={() => onAdd('paint')}>＋ Paint</button>
-          <button type="button" aria-label="Add rectangle" onClick={() => onAdd('rectangle')}>▭</button>
-          <button type="button" aria-label="Add ellipse" onClick={() => onAdd('ellipse')}>○</button>
-          <button type="button" aria-label="Add line" onClick={() => onAdd('line')}>╱</button>
-          <button type="button" aria-label="Add text" onClick={() => onAdd('text')}>T</button>
         </div>
       </div>
       {selectedLayerIds.length > 1 && (
