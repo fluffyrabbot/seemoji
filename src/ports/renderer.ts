@@ -1,3 +1,4 @@
+import type { TextBubble } from '../domain/textBubble';
 import type { CanvasLayout, BrushStroke, LayerBounds, MaskStroke, RasterRun } from '../domain/design';
 import type { LinearMatrix, RenderPlan } from '../domain/renderPlan';
 
@@ -33,6 +34,7 @@ export type RenderLayerInput =
     }
   | {
       readonly kind: 'text';
+      readonly bubble?: TextBubble;
       readonly visible: boolean;
       readonly opacity: number;
       readonly matrix: LinearMatrix & { readonly e: number; readonly f: number };

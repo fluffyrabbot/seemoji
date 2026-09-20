@@ -1,3 +1,5 @@
+import { setTextBubble } from '../domain/textBubble';
+import { fitCanvasText } from './textLayout';
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
 import type { RenderCoordinator } from '../application/renderCoordinator';
@@ -133,7 +135,7 @@ function StylePreview({ layer, renderer }: { readonly layer: EmojiLayer; readonl
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
   // Position does not belong in the style swatch; keep every preview centered and visible.
-  const document: DesignDocument = { version: 4, groups: [], canvas: { layout: 'default' }, layers: [{
+  const document: DesignDocument = { version: 5, groups: [], canvas: { layout: 'default' }, layers: [{
     ...layer, visible: true, opacity: 1, transform: { ...layer.transform, x: 0, y: 0 },
   }] };
   const key = JSON.stringify(document);
@@ -256,8 +258,15 @@ function SelectionControls({
       </fieldset>}
 
       {single?.kind === 'text' && <div className="inspector-object-fields">
-        <label><span>Text</span><input id="editor-text" type="text" maxLength={500} value={single.text}
-          onChange={(event) => updateSingle({ ...single, text: event.target.value || ' ' }, 'text')}
+        <div className="bubble-options" role="group" aria-label="Text bubble">
+          {(['plain', 'speech', 'thought'] as const).map((kind) => <button key={kind} type="button"
+            aria-pressed={(single.bubble?.kind ?? 'plain') === kind}
+            onClick={() => onUpdateLayer(fitCanvasText(setTextBubble(single, kind)))}>
+            {kind[0]!.toUpperCase() + kind.slice(1)}
+          </button>)}
+        </div>
+        <label><span>Text</span><textarea id="editor-text" rows={3} maxLength={500} value={single.text}
+          onChange={(event) => updateSingle(fitCanvasText({ ...single, text: event.target.value || ' ' }), 'text')}
           onBlur={onCommit} /></label>
         <label className="color-control"><span>Text color</span>
           <input type="color" value={single.color}

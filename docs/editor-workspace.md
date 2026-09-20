@@ -29,9 +29,9 @@ quick access without copying its design. **Make a copy** is the explicit copy
 operation and creates a new project with a new identity.
 
 Project JSON exports use a versioned envelope containing identity, name,
-timestamps, star metadata, and a strictly decoded `DesignDocumentV4`. Import also
+timestamps, star metadata, and a strictly decoded `DesignDocumentV5`. Import also
 accepts bare V1 recipes or V2 scenes, migrates them with an explicit empty group
-collection. V1–V3 documents migrate to the default canvas layout. Import always creates a new project identity. Current V4 scenes require
+collection. V1–V3 documents migrate to the default canvas layout. Import always creates a new project identity. Current V5 scenes require
 their group collection and reject invalid membership.
 Projects use IndexedDB. Canvas layout is project state and renders into PNGs.
 Grid visibility, snapping, and guide preferences remain separate device settings
@@ -189,3 +189,8 @@ persist on the device but are intentionally excluded from exported artwork.
 Move gestures test layer edges and centers against the canvas, grid, and every
 non-selected visible layer. Only the closest candidate within the zoom-adjusted
 threshold is applied on each axis.
+
+Text layers support Plain, Speech, and Thought presentation with wrapped text, automatic
+padding, and a draggable tail. The bubble is part of the text object and exports with it.
+Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
+V4 documents migrate to V5 preserving their canvas layout and plain text layers.

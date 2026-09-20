@@ -18,6 +18,13 @@ export interface WorldPoint { readonly x: number; readonly y: number }
 const DEFAULT_BOUNDS: LayerBounds = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 };
 
 export function layerLocalBounds(layer: SceneLayer): LayerBounds {
+  if (layer.kind === 'text' && layer.bubble) {
+    const { x, y, width, height } = layer.bounds;
+    const tail = layer.bubble.tail;
+    const left = Math.min(x, tail.x), top = Math.min(y, tail.y);
+    return { x: left, y: top, width: Math.max(x + width, tail.x) - left,
+      height: Math.max(y + height, tail.y) - top };
+  }
   if (layer.kind === 'shape' || layer.kind === 'text') return layer.bounds;
   if (layer.kind === 'emoji') return {
     x: (1 - BASE_GLYPH_RATIO) / 2, y: (1 - BASE_GLYPH_RATIO) / 2,

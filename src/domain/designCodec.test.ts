@@ -3,7 +3,7 @@ import { DEFAULT_DESIGN, getEmojiLayer, type DesignDocumentV1 } from './design';
 import { decodeDesignDocument } from './designCodec';
 
 describe('design document codec', () => {
-  it('round-trips a valid V4 scene document', () => {
+  it('round-trips a valid V5 scene document', () => {
     expect(decodeDesignDocument(JSON.parse(JSON.stringify(DEFAULT_DESIGN)))).toEqual({
       ok: true,
       value: DEFAULT_DESIGN,
@@ -41,7 +41,7 @@ describe('design document codec', () => {
     expect(decodeDesignDocument({ ...DEFAULT_DESIGN, layers, groups }).ok).toBe(false);
   });
 
-  it('explicitly promotes a V1 recipe into a V4 emoji layer', () => {
+  it('explicitly promotes a V1 recipe into a V5 emoji layer', () => {
     const layer = getEmojiLayer(DEFAULT_DESIGN);
     const { x: _x, y: _y, ...positionlessTransform } = layer.transform;
     const versionOne: DesignDocumentV1 = {
@@ -53,7 +53,7 @@ describe('design document codec', () => {
     const decoded = decodeDesignDocument(versionOne);
     expect(decoded.ok).toBe(true);
     if (decoded.ok) {
-      expect(decoded.value.version).toBe(4);
+      expect(decoded.value.version).toBe(5);
       expect(getEmojiLayer(decoded.value).transform).toMatchObject({ x: 0, y: 0, rotate: 18 });
     }
   });

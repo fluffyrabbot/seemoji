@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-205,000 raw bytes and 64,000 gzip-9 bytes) and all deferred or otherwise
+211,000 raw bytes and 66,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 and the full emoji search catalog loaded only on interaction. See
@@ -79,7 +79,7 @@ EditorWorkspaceStore ────────► WorkspaceController ───�
    └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
-DesignDocumentV4 scene + canvas layout + named selection groups
+DesignDocumentV5 scene + canvas layout + named selection groups
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -124,7 +124,7 @@ not treat Strict Mode behavior as equivalent between the two runtimes.
 
 ## Design and rendering invariants
 
-`DesignDocumentV4` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
+`DesignDocumentV5` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
 common scene-node contract for emoji, pressure strokes, geometric shapes, text,
 and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
@@ -235,3 +235,8 @@ injection remain out of scope.
 
 Emoji artwork is from [Twemoji](https://github.com/jdecked/twemoji), licensed
 under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+Text layers support Plain, Speech, and Thought presentation with wrapped text, automatic
+padding, and a draggable tail. The bubble is part of the text object and exports with it.
+Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
+V4 documents migrate to V5 preserving their canvas layout and plain text layers.

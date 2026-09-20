@@ -1,3 +1,4 @@
+import type { TextBubble } from './textBubble';
 import { createEmojiAssetRef, type EmojiAssetRef } from './emoji';
 
 export interface Transform {
@@ -99,6 +100,7 @@ export interface ShapeLayer extends SceneNode {
 
 export interface TextLayer extends SceneNode {
   readonly kind: 'text';
+  readonly bubble?: TextBubble;
   readonly bounds: LayerBounds;
   readonly text: string;
   /** Font size as a fraction of the output square. */
@@ -153,7 +155,8 @@ export interface DesignDocumentV4 extends Omit<DesignDocumentV3, 'version' | 'ca
   readonly canvas: { readonly layout: CanvasLayout };
 }
 
-export type DesignDocument = DesignDocumentV4;
+export interface DesignDocumentV5 extends Omit<DesignDocumentV4, 'version'> { readonly version: 5 }
+export type DesignDocument = DesignDocumentV5;
 
 export const DESIGN_LIMITS = {
   x: [-0.5, 0.5],
@@ -209,7 +212,7 @@ export const DEFAULT_EMOJI_LAYER: EmojiLayer = {
 };
 
 export const DEFAULT_DESIGN: DesignDocument = {
-  version: 4,
+  version: 5,
   canvas: { layout: 'default' },
   layers: [DEFAULT_EMOJI_LAYER],
   groups: [],

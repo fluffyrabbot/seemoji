@@ -1,3 +1,4 @@
+import { fitCanvasText } from './textLayout';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
@@ -21,6 +22,7 @@ import {
   getEmojiLayer,
   type BrushStroke,
   type CanvasLayout,
+  type TextLayer,
   type DesignDocument,
   type MaskStroke,
   type RasterLayer,
@@ -187,12 +189,15 @@ export default function Preview({
   const draftRef = useRef<DraftStroke | null>(null);
   const marqueeRef = useRef<Marquee | null>(null);
   const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; shiftKey: boolean; altKey: boolean; id: string; color: string } | null>(null);
+  const tailRef = useRef<{ pointerId: number; layer: TextLayer } | null>(null);
+  const [tailDraft, setTailDraft] = useState<TextLayer | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const editingText = design.layers.find((layer) => layer.id === editingTextId && layer.visible);
   const [placement, setPlacement] = useState<typeof placementRef.current>(null);
   useLayoutEffect(() => {
     placementRef.current = null;
     setPlacement(null);
+    tailRef.current = null; setTailDraft(null);
   }, [tool, editingGroupId]);
   const gestureScope = useRef(editingGroupId);
   const [draft, setDraft] = useState<DraftStroke | null>(null);
@@ -234,7 +239,7 @@ export default function Preview({
     endTouch,
   } = useCanvasViewport(stageRef);
   const previewDesign = useMemo(
-    () => editingTextId ? { ...design, layers: design.layers.filter((layer) => layer.id !== editingTextId) } : showOriginal ? {
+    () => tailDraft ? { ...design, layers: design.layers.map((layer) => layer.id === tailDraft.id ? tailDraft : layer) } : editingTextId ? { ...design, layers: design.layers.filter((layer) => layer.id !== editingTextId) } : showOriginal ? {
       ...design,
       layers: design.layers.map((candidate) => !selectedLayerIds.includes(candidate.id) ? candidate : {
         ...candidate,
@@ -242,7 +247,7 @@ export default function Preview({
         ...(candidate.kind === 'emoji' ? { appearance: DEFAULT_APPEARANCE } : {}),
       }),
     } : design,
-    [design, showOriginal, selectedLayerIds, editingTextId],
+    [design, showOriginal, selectedLayerIds, editingTextId, tailDraft],
   );
   const renderKey = `${size}:${JSON.stringify(design)}`;
   const previewKey = `${previewRenderSize}:${JSON.stringify(previewDesign)}`;
@@ -351,6 +356,7 @@ export default function Preview({
 
   const startTouchNavigation = (event: PointerEvent): boolean => {
     if (!beginTouch(event)) return false;
+    tailRef.current = null; setTailDraft(null);
     draftRef.current = null;
     placementRef.current = null;
     setPlacement(null);
@@ -534,6 +540,17 @@ export default function Preview({
   };
 
   const continueGesture = (event: PointerEvent) => {
+    const tail = tailRef.current;
+    if (tail?.pointerId === event.pointerId) {
+      const world = pointInCanvas(event);
+      const local = world && worldPointToLayerLocal(tail.layer, world);
+      if (local && tail.layer.bubble) {
+        const next: TextLayer = { ...tail.layer, bubble: { ...tail.layer.bubble,
+          tail: { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
+        tailRef.current = { ...tail, layer: next }; setTailDraft(next);
+      }
+      return;
+    }
     if (continueTouch(event)) return;
     const worldPoint = pointInCanvas(event);
     if (tool === 'brush' || tool === 'eraser' || tool === 'restore') {
@@ -638,6 +655,11 @@ export default function Preview({
   };
 
   const endGesture = (event: PointerEvent) => {
+    if (tailRef.current?.pointerId === event.pointerId) {
+      continueGesture(event);
+      const layer = tailRef.current.layer;
+      tailRef.current = null; setTailDraft(null); onEditText(layer); return;
+    }
     if (endTouch(event)) return;
     if (endPan(event)) return;
     const placed = placementRef.current;
@@ -712,6 +734,9 @@ export default function Preview({
   };
 
   const cancelGesture = (event: PointerEvent) => {
+    if (tailRef.current?.pointerId === event.pointerId) {
+      tailRef.current = null; setTailDraft(null); return;
+    }
     if (endTouch(event)) return;
     if (endPan(event)) return;
     if (placementRef.current?.pointerId === event.pointerId) {
@@ -934,6 +959,7 @@ export default function Preview({
             }
           }}
           onKeyDown={(event) => {
+            if (event.key === 'Escape' && tailRef.current) { tailRef.current = null; setTailDraft(null); event.stopPropagation(); return; }
             const selected = design.layers.find((layer) => layer.id === selectedLayerIds[0]);
             if (event.key === 'Enter' && tool === 'select' && selectedLayerIds.length === 1 && selected?.kind === 'text') {
               event.preventDefault();
@@ -970,7 +996,7 @@ export default function Preview({
             />
             {editingText?.kind === 'text' && <CanvasTextEditor key={editingText.id}
               layer={editingText} size={previewRenderSize} onFinish={(text) => {
-                if (text !== null && (text || ' ') !== editingText.text) onEditText({ ...editingText, text: text || ' ' });
+                if (text !== null && (text || ' ') !== editingText.text) onEditText(fitCanvasText({ ...editingText, text: text || ' ' }));
                 setEditingTextId(null);
               }} />}
             {canvasSettings.showGrid && (
@@ -1025,6 +1051,31 @@ export default function Preview({
                 </g>
               </svg>
             )}
+            {!editingTextId && tool === 'select' && selectedLayers.length === 1 && (() => {
+              const text = tailDraft ?? selectedLayers[0];
+              if (text?.kind !== 'text' || !text.bubble || !text.visible) return null;
+              const { a, b, c, d, e, f } = layerLocalToWorldMatrix(text);
+              const tip = text.bubble.tail;
+              const x = (a * tip.x + c * tip.y + e) * previewRenderSize;
+              const y = (b * tip.x + d * tip.y + f) * previewRenderSize;
+              return <svg className="bubble-tail-overlay" viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`}>
+                <circle role="button" aria-label="Bubble tail" tabIndex={0} cx={x} cy={y} r={previewRenderSize * 0.022 / viewport.zoom}
+                  onKeyDown={(event) => {
+                    const move = { ArrowLeft: [-0.01, 0], ArrowRight: [0.01, 0], ArrowUp: [0, -0.01], ArrowDown: [0, 0.01] }[event.key];
+                    if (!move) return;
+                    event.preventDefault(); event.stopPropagation();
+                    onEditText({ ...text, bubble: { ...text.bubble!, tail: {
+                      x: Math.max(0, Math.min(1, tip.x + move[0]!)), y: Math.max(0, Math.min(1, tip.y + move[1]!)) } } });
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.preventDefault(); event.stopPropagation();
+                    stageRef.current?.focus({ preventScroll: true });
+                    stageRef.current?.setPointerCapture(event.pointerId);
+                    tailRef.current = { pointerId: event.pointerId, layer: text }; setTailDraft(text);
+                  }} />
+              </svg>;
+            })()}
             <svg className="text-boundaries" viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`} aria-hidden="true">
               {design.layers.filter((layer) => layer.kind === 'text' && layer.visible).map((layer) => {
                 const displayed = showOriginal && selectedLayerIds.includes(layer.id)

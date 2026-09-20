@@ -1,3 +1,4 @@
+import { bubblePaths, textLayout } from '../../domain/textBubble';
 import { comicPanels } from '../../domain/canvasLayout';
 import type { BrushStroke, MaskStroke, StrokePoint } from '../../domain/design';
 import { toTopLeftOrigin, type AffineMatrix, type RenderPlan } from '../../domain/renderPlan';
@@ -77,13 +78,37 @@ const drawText = (
   layer: Extract<RenderLayerInput, { readonly kind: 'text' }>,
   size: number,
 ) => {
-  const { x, y, width } = layer.bounds;
+  const { x, y } = layer.bounds;
+  destination.save();
+  destination.scale(size, size);
+  destination.fillStyle = '#ffffff';
+  destination.strokeStyle = '#111111';
+  destination.lineWidth = 0.004;
+  for (const path of bubblePaths(layer)) {
+    const shape = new Path2D(path);
+    destination.fill(shape); destination.stroke(shape);
+  }
+  destination.restore();
+  const layout = textLayout(layer, (text, fontSize) => {
+    destination.font = `${fontSize * 1024}px ${layer.fontFamily}`;
+    return destination.measureText(text).width / 1024;
+  });
   destination.fillStyle = layer.color;
   destination.font = `${layer.fontSize * size}px ${layer.fontFamily}`;
   destination.textAlign = layer.align;
   destination.textBaseline = 'top';
-  const anchor = layer.align === 'left' ? x : layer.align === 'center' ? x + width / 2 : x + width;
-  destination.fillText(layer.text, anchor * size, y * size, width * size);
+  destination.save();
+  if (layer.bubble) {
+    destination.beginPath();
+    destination.rect((x + layout.padding) * size, (y + layout.padding) * size,
+      layout.width * size, Math.max(0, layer.bounds.height - layout.padding * 2) * size);
+    destination.clip();
+  }
+  const anchor = x + layout.padding + (layer.align === 'left' ? 0 : layer.align === 'center' ? layout.width / 2 : layout.width);
+  for (const [index, line] of layout.lines.entries()) {
+    destination.fillText(line, anchor * size, (y + layout.padding + index * layout.lineHeight) * size, layout.width * size);
+  }
+  destination.restore();
 };
 
 const drawRaster = (

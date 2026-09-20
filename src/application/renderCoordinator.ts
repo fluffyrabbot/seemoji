@@ -65,7 +65,7 @@ export class RenderCoordinator {
         if (layer.kind === 'shape') return { kind: 'shape' as const, ...common, shape: layer.shape,
           bounds: layer.bounds, fill: layer.fill, stroke: layer.stroke };
         if (layer.kind === 'text') return { kind: 'text' as const, ...common, bounds: layer.bounds,
-          text: layer.text, fontSize: layer.fontSize, color: layer.color,
+          ...(layer.bubble ? { bubble: layer.bubble } : {}), text: layer.text, fontSize: layer.fontSize, color: layer.color,
           fontFamily: layer.fontFamily, align: layer.align };
         return { kind: 'raster' as const, ...common, resolution: layer.resolution, runs: layer.runs };
       }),

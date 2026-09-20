@@ -7,6 +7,7 @@ import {
   type SceneLayer,
   type Transform,
 } from '../domain/design';
+import { fitCanvasText } from './textLayout';
 import { selectionCenter } from './inspectorModel';
 import type { ControlsProps, SliderProps } from './Controls';
 
@@ -77,10 +78,10 @@ export default function AdvancedControls({
             {single.kind === 'text' && <>
               <Slider label="Font size" min={DESIGN_LIMITS.fontSize[0]} max={DESIGN_LIMITS.fontSize[1]}
                 step={0.005} displayScale={100} suffix="%" defaultValue={0.18} value={single.fontSize}
-                onChange={(value, label) => updateSingle({ ...single, fontSize: value }, label)} onCommit={onCommit} />
+                onChange={(value, label) => updateSingle(fitCanvasText({ ...single, fontSize: value }), label)} onCommit={onCommit} />
               <div className="inspector-object-fields">
                 <label><span>Font</span><select value={single.fontFamily} onChange={(event) =>
-                  onUpdateLayer({ ...single, fontFamily: event.target.value as typeof single.fontFamily })}>
+                  onUpdateLayer(fitCanvasText({ ...single, fontFamily: event.target.value as typeof single.fontFamily }))}>
                   <option value="sans-serif">Sans serif</option><option value="serif">Serif</option>
                   <option value="monospace">Monospace</option>
                 </select></label>

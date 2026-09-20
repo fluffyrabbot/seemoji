@@ -219,6 +219,7 @@ const exportProject = async (page: Page) => {
       readonly kind: string;
       readonly name: string;
       readonly text?: string;
+      readonly bubble?: { readonly kind: string; readonly tail: { readonly x: number; readonly y: number } };
       readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
       readonly source?: { readonly grapheme: string };
       readonly appearance?: {
@@ -1832,7 +1833,7 @@ test('keeps named groups through history, reload, duplication, and project impor
   await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
   await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
   const named = await exportProject(page);
-  expect(named.design.version).toBe(4);
+  expect(named.design.version).toBe(5);
   expect(named.design.groups).toHaveLength(1);
   expect(named.design.groups[0]!.name).toBe('Badge');
   await page.getByRole('button', { name: /Undo/ }).click();
@@ -2161,4 +2162,76 @@ test('text boundaries stay visible while typing and deselected on comic canvases
   expect((await downloadedPng(page)).textBorder).toEqual([255, 255, 255, 255]);
   await page.getByRole('button', { name: 'Hide “Text”', exact: true }).click();
   await expect(boundary).toHaveCount(0);
+});
+
+
+test('one-click bubbles wrap, export, persist, and move their tail as one undoable object', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 });
+  await page.getByRole('button', { name: 'Hide “Emoji”', exact: true }).click();
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hello there');
+  await page.keyboard.press('Enter');
+  const bubble = page.getByRole('group', { name: 'Text bubble', exact: true });
+  await expect(bubble.getByRole('button', { name: 'Plain', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await bubble.getByRole('button', { name: 'Speech', exact: true }).click();
+  const speech = await exportProject(page);
+  const original = speech.design.layers.find(({ kind }) => kind === 'text')!;
+  expect(original.bubble?.kind).toBe('speech');
+  expect(original.bounds!.height).toBeGreaterThan(0.24);
+  // White body and black outline are real PNG content, not editing guides.
+  expect((await downloadedPng(page)).center[3]).toBe(255);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(bubble.getByRole('button', { name: 'Plain', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /Redo/ }).click();
+  const handle = page.getByRole('button', { name: 'Bubble tail', exact: true });
+  const tailBox = await handle.boundingBox();
+  const canvas = await page.locator('.canvas-world').boundingBox();
+  if (!tailBox || !canvas) throw new Error('Missing tail handle');
+  await page.mouse.move(tailBox.x + tailBox.width / 2, tailBox.y + tailBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * 0.85, canvas.y + canvas.height * 0.85, { steps: 4 });
+  await page.mouse.up();
+  const moved = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(moved.bubble!.tail.x).toBeCloseTo(0.85, 2);
+  expect(moved.bubble!.tail.y).toBeCloseTo(0.85, 2);
+  expect(moved.text).toBe(original.text);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)!.bubble).toEqual(original.bubble);
+  await bubble.getByRole('button', { name: 'Thought', exact: true }).click();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(bubble.getByRole('button', { name: 'Thought', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await bubble.getByRole('button', { name: 'Plain', exact: true }).click();
+  const plain = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(plain.bubble).toBeUndefined();
+  expect(plain.text).toBe(original.text);
+});
+
+test('rotated bubble tails follow pointer coordinates and Escape cancels a drag', async ({ page }) => {
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
+  await page.keyboard.press('Enter');
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
+  const original = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  const tail = page.getByRole('button', { name: 'Bubble tail', exact: true });
+  const drag = async (cancel: boolean) => {
+    await tail.scrollIntoViewIfNeeded();
+    const box = await tail.boundingBox();
+    const canvas = await page.locator('.canvas-world').boundingBox();
+    if (!box || !canvas) throw new Error('Missing tail');
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    await page.mouse.move(x + canvas.width * 0.08, y, { steps: 3 });
+    if (cancel) await page.keyboard.press('Escape');
+    await page.mouse.up();
+  };
+  await drag(true);
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)!.bubble).toEqual(original.bubble);
+  await drag(false);
+  const moved = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(moved.bubble!.tail.x).toBeCloseTo(original.bubble!.tail.x, 2);
+  expect(moved.bubble!.tail.y).toBeCloseTo(original.bubble!.tail.y - 0.08, 2);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)!.bubble).toEqual(original.bubble);
 });

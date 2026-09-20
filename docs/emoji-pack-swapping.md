@@ -11,7 +11,7 @@
 ## Overview
 
 > **Current scene format (2026-09-19):** the editor now normalizes recipes to
-> `DesignDocumentV4`, with durable named selection groups and canvas layouts. V1–V3 designs
+> `DesignDocumentV5`, with durable named selection groups and canvas layouts. V1–V3 designs
 > migrate through the design codec. The V2 references below describe the original
 > pack rollout; emoji source identities and pinned artwork semantics are unchanged.
 
@@ -1488,3 +1488,8 @@ Each PR is independently reviewable and mergeable. Later PRs add data and UI; th
 - Fluent `flat` / `high-contrast` / PNG `3d` stills (`maxAssetBytes` raised on that manifest).
 - Integer-scale pixel-art option for Serenity.
 - Optional `load()` of a picker cell on hover to warm the decode cache.
+
+Text layers support Plain, Speech, and Thought presentation with wrapped text, automatic
+padding, and a draggable tail. The bubble is part of the text object and exports with it.
+Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
+V4 documents migrate to V5 preserving their canvas layout and plain text layers.
