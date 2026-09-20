@@ -1,7 +1,7 @@
 import type { TextLayer } from './design';
 
 export type BubbleKind = 'speech' | 'thought';
-export interface TextBubble { readonly kind: BubbleKind; readonly tail: { readonly x: number; readonly y: number } }
+export interface TextBubble { readonly kind: BubbleKind; readonly speakerId?: string; readonly tail: { readonly x: number; readonly y: number } }
 export type MeasureText = (text: string, fontSize: number) => number;
 
 export function textLayout(layer: Pick<TextLayer, 'bounds' | 'fontSize' | 'text' | 'bubble'>, measure: MeasureText) {
@@ -44,7 +44,7 @@ export function setTextBubble(layer: TextLayer, kind: BubbleKind | 'plain'): Tex
   const { bubble: previous, ...plain } = layer;
   if (kind === 'plain') return plain;
   const { x, y, width, height } = layer.bounds;
-  return { ...layer, bubble: { kind, tail: previous?.tail ?? {
+  return { ...layer, bubble: { kind, ...(previous?.speakerId ? { speakerId: previous.speakerId } : {}), tail: previous?.tail ?? {
     x: x + width * 0.25, y: y + height <= 0.92 ? y + height + 0.08 : Math.max(0, y - 0.08),
   } } };
 }

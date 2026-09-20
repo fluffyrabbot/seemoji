@@ -1,3 +1,4 @@
+import { resolveBubbleAttachments } from '../domain/bubbleAttachment';
 import {
   DEFAULT_DESIGN,
   DEFAULT_APPEARANCE,
@@ -125,6 +126,7 @@ function recordDesign(
   historyGroup?: string,
 ): EditorState {
   if (design === state.design || selectionGroupError(design.groups, design.layers)) return state;
+  design = resolveBubbleAttachments(design);
   if (historyGroup && state.historyGroup === historyGroup) {
     return {
       ...state,
@@ -166,7 +168,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return recordDesign(state, { ...state.design, canvas: { layout: action.layout } });
     case 'load-design':
       return hasDesignCapacity(action.design) && !selectionGroupError(action.design.groups, action.design.layers)
-        ? { ...state, design: action.design, past: [], future: [], historyGroup: null,
+        ? { ...state, design: resolveBubbleAttachments(action.design), past: [], future: [], historyGroup: null,
             selectedLayerIds: validSelection(action.design, [action.design.layers.at(-1)!.id]), editingGroupId: null }
         : state;
     case 'replace-design':
@@ -354,7 +356,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const transforms = new Map(translateSelection(originals, { x: offset, y: offset })
         .map(({ layerId, transform }) => [layerId, transform]));
       const next = originals.map((layer) => ({ ...layer, id: idMap.get(layer.id)!,
-        name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)! }));
+        name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)!,
+        ...(layer.kind === 'text' && layer.bubble?.speakerId ? { bubble: { ...layer.bubble,
+          speakerId: idMap.get(layer.bubble.speakerId) ?? layer.bubble.speakerId } } : {}) }));
       const copiedGroups = copySelectionGroups(copyingGroups,
         idMap,
         new Map(copyingGroups.map((group, index) => [group.id, action.duplicateGroupIds[index]!])));

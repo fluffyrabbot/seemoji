@@ -11,7 +11,7 @@
 ## Overview
 
 > **Current scene format (2026-09-19):** the editor now normalizes recipes to
-> `DesignDocumentV5`, with durable named selection groups and canvas layouts. V1–V3 designs
+> `DesignDocumentV6`, with durable named selection groups and canvas layouts. V1–V3 designs
 > migrate through the design codec. The V2 references below describe the original
 > pack rollout; emoji source identities and pinned artwork semantics are unchanged.
 
@@ -1496,3 +1496,9 @@ V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
+
+Bubble Speaker selects an optional emoji attachment; Free tail or dragging the
+tail detaches it. Speaker movement updates the tail in the same undo transaction.
+Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
+together links the copies; copying only the bubble retains its original speaker.
+V5 projects migrate to V6 without adding attachments.

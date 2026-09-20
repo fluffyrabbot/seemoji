@@ -244,3 +244,13 @@ Initial JavaScript moves from 209,885 raw / 65,014 gzip-9 bytes to 211,573 raw /
 The initial raw ceiling becomes 212,000; compressed and deferred ceilings stay
 unchanged. Placement reuses comic panel and affine geometry, with no dependency.
 This small synchronous inspector action does not justify a new loading phase.
+
+### Optional speaker attachments
+
+Initial JavaScript moves from 211,573 raw / 65,727 gzip-9 bytes to 213,335 raw /
+66,197 gzip-9 bytes. Deferred code stays 11,062 raw (4,330 gzip-9 bytes). Initial
+ceilings become 214,000 raw / 67,000 gzip-9 bytes; deferred limits stay unchanged.
+A shared domain resolver updates attachments on editor transactions and import,
+so rendering and export consume the same concrete geometry. No dependency was
+added. The resolver is synchronous core editing logic and cannot be deferred
+without introducing asynchronous document updates.

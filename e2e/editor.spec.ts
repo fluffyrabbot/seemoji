@@ -220,7 +220,7 @@ const exportProject = async (page: Page) => {
       readonly name: string;
       readonly text?: string;
       readonly fontSize?: number;
-      readonly bubble?: { readonly kind: string; readonly tail: { readonly x: number; readonly y: number } };
+      readonly bubble?: { readonly kind: string; readonly speakerId?: string; readonly tail: { readonly x: number; readonly y: number } };
       readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
       readonly source?: { readonly grapheme: string };
       readonly appearance?: {
@@ -1834,7 +1834,7 @@ test('keeps named groups through history, reload, duplication, and project impor
   await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
   await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
   const named = await exportProject(page);
-  expect(named.design.version).toBe(5);
+  expect(named.design.version).toBe(6);
   expect(named.design.groups).toHaveLength(1);
   expect(named.design.groups[0]!.name).toBe('Badge');
   await page.getByRole('button', { name: /Undo/ }).click();
@@ -2289,4 +2289,44 @@ test('initial comic bubble placement stays inside a panel and is one undo step',
   await page.getByRole('button', { name: /Undo/ }).click();
   await page.getByRole('button', { name: /Undo/ }).click();
   expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
+});
+
+test('attached bubble tails follow speakers, persist, and detach on manual drag', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 });
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
+  await page.keyboard.press('Enter');
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  const speaker = page.getByRole('combobox', { name: 'Bubble speaker', exact: true });
+  await speaker.selectOption({ label: 'Emoji' });
+  const before = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  expect(before.bubble!.speakerId).toBeTruthy();
+  await page.locator('.layer-select').filter({ hasText: 'Emoji' }).click();
+  const canvas = page.getByLabel(/Interactive emoji canvas/);
+  await canvas.focus();
+  await canvas.press('Shift+ArrowRight');
+  const moved = (await exportProject(page)).design.layers.find(({ id }) => id === before.id)!;
+  expect(moved.bubble!.tail).not.toEqual(before.bubble!.tail);
+  await page.locator('.layer-select').filter({ hasText: 'Text' }).click();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+  const tail = page.getByRole('button', { name: 'Bubble tail', exact: true });
+  const drag = async (cancel: boolean) => {
+    await tail.scrollIntoViewIfNeeded();
+    const box = await tail.boundingBox();
+    if (!box) throw new Error('No tail handle');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 35, box.y + box.height / 2 + 25, { steps: 4 });
+    if (cancel) await page.keyboard.press('Escape');
+    await page.mouse.up();
+  };
+  await drag(true);
+  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+  await drag(false);
+  await expect(speaker).toHaveValue('');
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === before.id)!.bubble!.speakerId).toBeUndefined();
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
 });

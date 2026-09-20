@@ -156,7 +156,8 @@ export interface DesignDocumentV4 extends Omit<DesignDocumentV3, 'version' | 'ca
 }
 
 export interface DesignDocumentV5 extends Omit<DesignDocumentV4, 'version'> { readonly version: 5 }
-export type DesignDocument = DesignDocumentV5;
+export interface DesignDocumentV6 extends Omit<DesignDocumentV5, 'version'> { readonly version: 6 }
+export type DesignDocument = DesignDocumentV6;
 
 export const DESIGN_LIMITS = {
   x: [-0.5, 0.5],
@@ -212,7 +213,7 @@ export const DEFAULT_EMOJI_LAYER: EmojiLayer = {
 };
 
 export const DEFAULT_DESIGN: DesignDocument = {
-  version: 5,
+  version: 6,
   canvas: { layout: 'default' },
   layers: [DEFAULT_EMOJI_LAYER],
   groups: [],

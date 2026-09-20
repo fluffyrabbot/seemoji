@@ -1,3 +1,4 @@
+import { detachBubble } from '../domain/bubbleAttachment';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
@@ -543,8 +544,8 @@ export default function Preview({
     if (tail?.pointerId === event.pointerId) {
       const world = pointInCanvas(event);
       const local = world && worldPointToLayerLocal(tail.layer, world);
-      if (local && tail.layer.bubble) {
-        const next: TextLayer = { ...tail.layer, bubble: { ...tail.layer.bubble,
+      if (local && tail.layer.bubble && Math.hypot(local.x - tail.layer.bubble.tail.x, local.y - tail.layer.bubble.tail.y) > 0.003) {
+        const next: TextLayer = { ...tail.layer, bubble: { ...detachBubble(tail.layer).bubble!,
           tail: { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
         tailRef.current = { ...tail, layer: next }; setTailDraft(next);
       }
@@ -1063,7 +1064,7 @@ export default function Preview({
                     const move = { ArrowLeft: [-0.01, 0], ArrowRight: [0.01, 0], ArrowUp: [0, -0.01], ArrowDown: [0, 0.01] }[event.key];
                     if (!move) return;
                     event.preventDefault(); event.stopPropagation();
-                    onEditText({ ...text, bubble: { ...text.bubble!, tail: {
+                    onEditText({ ...text, bubble: { ...detachBubble(text).bubble!, tail: {
                       x: Math.max(0, Math.min(1, tip.x + move[0]!)), y: Math.max(0, Math.min(1, tip.y + move[1]!)) } } });
                   }}
                   onPointerDown={(event) => {

@@ -1,3 +1,4 @@
+import { resolveBubbleAttachments } from './bubbleAttachment';
 import {
   DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
@@ -206,7 +207,7 @@ function decodeDesignDocumentV1(document: Record<string, unknown>): DecodeResult
 
 export function migrateDesignDocumentV1(document: DesignDocumentV1): DesignDocument {
   return {
-    version: 5,
+    version: 6,
     groups: [],
     canvas: { layout: 'default' },
     layers: [
@@ -479,13 +480,16 @@ function decodeTextLayer(value: unknown, index: number): DecodeResult<TextLayer>
   if (layer.bubble !== undefined && (!bubble || (bubble.kind !== 'speech' && bubble.kind !== 'thought'))) {
     return { ok: false, error: `${path}.bubble.kind must be speech or thought` };
   }
+  if (bubble?.speakerId !== undefined && (typeof bubble.speakerId !== 'string' || !bubble.speakerId || bubble.speakerId.length > 120)) {
+    return { ok: false, error: `${path}.bubble.speakerId must be a layer id` };
+  }
   const tail = bubble && record(bubble.tail);
   if (bubble && (!tail || typeof tail.x !== 'number' || !Number.isFinite(tail.x) || tail.x < 0 || tail.x > 1
       || typeof tail.y !== 'number' || !Number.isFinite(tail.y) || tail.y < 0 || tail.y > 1)) {
     return { ok: false, error: `${path}.bubble.tail must be inside the canvas` };
   }
   return { ok: true, value: { ...common.value, kind: 'text', bounds: bounds.value, text: layer.text,
-    ...(bubble && tail ? { bubble: { kind: bubble.kind as 'speech' | 'thought', tail: { x: tail.x as number, y: tail.y as number } } } : {}),
+    ...(bubble && tail ? { bubble: { kind: bubble.kind as 'speech' | 'thought', ...(typeof bubble.speakerId === 'string' ? { speakerId: bubble.speakerId } : {}), tail: { x: tail.x as number, y: tail.y as number } } } : {}),
     fontSize: fontSize.value, color: color.value, fontFamily: layer.fontFamily, align: layer.align } };
 }
 
@@ -599,19 +603,23 @@ export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocumen
     const decoded = decodeDesignDocumentV1(document);
     return decoded.ok ? { ok: true, value: migrateDesignDocumentV1(decoded.value) } : decoded;
   }
-  if (document.version === 2 || document.version === 3 || document.version === 4 || document.version === 5) {
-    const layout = (document.version === 4 || document.version === 5) ? record(document.canvas)?.layout : 'default';
+  if (document.version === 2 || document.version === 3 || document.version === 4 || document.version === 5 || document.version === 6) {
+    const layout = (document.version === 4 || document.version === 5 || document.version === 6) ? record(document.canvas)?.layout : 'default';
     if (layout !== 'default' && layout !== 'comic4' && layout !== 'comic6') {
       return { ok: false, error: 'canvas.layout must be default, comic4, or comic6' };
     }
-    const scene = decodeDesignDocumentV2(document.version === 4 || document.version === 5
+    const scene = decodeDesignDocumentV2(document.version === 4 || document.version === 5 || document.version === 6
       ? { ...document, canvas: { background: 'transparent' } } : document);
     if (!scene.ok) return scene;
+    if (scene.value.layers.some((layer) => layer.kind === 'text' && layer.bubble?.speakerId
+      && !scene.value.layers.some((speaker) => speaker.id === layer.bubble!.speakerId && speaker.kind === 'emoji'))) {
+      return { ok: false, error: 'bubble speaker must reference an emoji layer' };
+    }
     const groups = document.version === 2
       ? { ok: true as const, value: [] }
       : decodeSelectionGroups(document.groups, scene.value.layers);
     return groups.ok
-      ? { ok: true, value: { ...scene.value, version: 5, canvas: { layout: layout as CanvasLayout }, groups: groups.value } }
+      ? { ok: true, value: resolveBubbleAttachments({ ...scene.value, version: 6, canvas: { layout: layout as CanvasLayout }, groups: groups.value }) }
       : groups;
   }
   return {

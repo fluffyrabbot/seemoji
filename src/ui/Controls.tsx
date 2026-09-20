@@ -1,3 +1,4 @@
+import { detachBubble } from '../domain/bubbleAttachment';
 import { placeTextBubble } from '../domain/bubblePlacement';
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
@@ -134,7 +135,7 @@ function StylePreview({ layer, renderer }: { readonly layer: EmojiLayer; readonl
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
   // Position does not belong in the style swatch; keep every preview centered and visible.
-  const document: DesignDocument = { version: 5, groups: [], canvas: { layout: 'default' }, layers: [{
+  const document: DesignDocument = { version: 6, groups: [], canvas: { layout: 'default' }, layers: [{
     ...layer, visible: true, opacity: 1, transform: { ...layer.transform, x: 0, y: 0 },
   }] };
   const key = JSON.stringify(document);
@@ -264,6 +265,14 @@ function SelectionControls({
             {kind[0]!.toUpperCase() + kind.slice(1)}
           </button>)}
         </div>
+        {single.bubble && <label><span>Speaker</span><select aria-label="Bubble speaker" value={single.bubble.speakerId ?? ''}
+          onChange={(event) => onUpdateLayer(event.target.value
+            ? { ...single, bubble: { ...single.bubble!, speakerId: event.target.value } }
+            : detachBubble(single))}>
+          <option value="">Free tail</option>
+          {design.layers.filter((layer) => layer.kind === 'emoji').map((layer) =>
+            <option key={layer.id} value={layer.id}>{layer.name}{layer.visible ? '' : ' (hidden)'}</option>)}
+        </select></label>}
         <label><span>Text</span><textarea id="editor-text" rows={3} maxLength={500} value={single.text}
           onChange={(event) => updateSingle({ ...single, text: event.target.value || ' ' }, 'text')}
           onBlur={onCommit} /></label>
