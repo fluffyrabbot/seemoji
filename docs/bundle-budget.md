@@ -257,7 +257,10 @@ without introducing asynchronous document updates.
 
 ### Drag-to-attach bubble tails
 
-Initial JavaScript moves from 213,335 raw / 66,197 gzip-9 bytes to 213,944 raw /
-66,417 gzip-9 bytes. Deferred code remains 11,062 raw / 4,330 gzip-9 bytes.
+Initial JavaScript moves from 213,335 raw / 66,197 gzip-9 bytes to 213,983 raw /
+66,429 gzip-9 bytes. Deferred code remains 11,062 raw / 4,329 gzip-9 bytes.
 Existing ceilings are unchanged. Hit testing reuses inverse affine transforms;
 the candidate highlight is an editor-only SVG overlay. No dependency was added.
+
+Escape now resolves against current reducer state, avoiding stale group-edit
+state between consecutive key presses. The change remains within existing budgets.

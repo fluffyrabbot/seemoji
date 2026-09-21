@@ -587,7 +587,7 @@ export default function App({ services, experiments }: Props) {
       if (editing) return;
       if (event.key === 'Escape') {
         event.preventDefault();
-        dispatch(editor.editingGroupId === null ? { type: 'select-layers', layerIds: [] } : { type: 'finish-group-edit' });
+        dispatch({ type: 'dismiss-selection' });
         setTool('select'); return;
       }
       if (command && key === 'z') { event.preventDefault(); dispatch({ type: event.shiftKey ? 'redo' : 'undo' }); return; }

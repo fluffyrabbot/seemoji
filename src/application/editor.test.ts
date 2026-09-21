@@ -656,3 +656,18 @@ describe('editor reducer', () => {
     })).toBe(oneSlotLeft);
   });
 });
+
+
+it('resolves consecutive Escape actions from current selection state', () => {
+  const original = INITIAL_EDITOR_STATE.design.layers[0]!;
+  const design = { ...INITIAL_EDITOR_STATE.design, layers: [original, { ...original, id: 'other' }],
+    groups: [{ id: 'pair', name: 'Pair', layerIds: [original.id, 'other'] }] };
+  const editing = { ...INITIAL_EDITOR_STATE, design, editingGroupId: 'pair', selectedLayerIds: [original.id] };
+  const exited = editorReducer(editing, { type: 'dismiss-selection' });
+  expect(exited.editingGroupId).toBeNull();
+  expect(exited.selectedLayerIds).toEqual([original.id, 'other']);
+  const cleared = editorReducer(exited, { type: 'dismiss-selection' });
+  expect(cleared.selectedLayerIds).toEqual([]);
+  expect(cleared.design).toBe(design);
+  expect(cleared.past).toEqual([]);
+});

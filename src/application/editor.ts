@@ -78,6 +78,7 @@ export type EditorAction =
   | { readonly type: 'select-group'; readonly groupId: string }
   | { readonly type: 'begin-group-edit'; readonly groupId: string; readonly layerId?: string }
   | { readonly type: 'finish-group-edit' }
+  | { readonly type: 'dismiss-selection' }
   | { readonly type: 'select-layer'; readonly layerId: string; readonly toggle?: boolean }
   | { readonly type: 'select-layers'; readonly layerIds: readonly string[] }
   | { readonly type: 'toggle-layer'; readonly layerId: string }
@@ -406,8 +407,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         ?? group.layerIds[0]!;
       return { ...state, selectedLayerIds: [selected], editingGroupId: group.id, historyGroup: null };
     }
+    case 'dismiss-selection':
     case 'finish-group-edit': {
-      if (state.editingGroupId === null) return state;
+      if (state.editingGroupId === null) return action.type === 'dismiss-selection'
+        ? { ...state, selectedLayerIds: [], historyGroup: null } : state;
       const group = state.design.groups.find((candidate) => candidate.id === state.editingGroupId);
       return { ...state, selectedLayerIds: group?.layerIds ?? validSelection(state.design, state.selectedLayerIds),
         editingGroupId: null, historyGroup: null };
