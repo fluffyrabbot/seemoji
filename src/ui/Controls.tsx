@@ -135,7 +135,7 @@ function StylePreview({ layer, renderer }: { readonly layer: EmojiLayer; readonl
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failedPreview, setFailedPreview] = useState<string | null>(null);
   // Position does not belong in the style swatch; keep every preview centered and visible.
-  const document: DesignDocument = { version: 6, groups: [], canvas: { layout: 'default' }, layers: [{
+  const document: DesignDocument = { version: 7, groups: [], canvas: { layout: 'default' }, layers: [{
     ...layer, visible: true, opacity: 1, transform: { ...layer.transform, x: 0, y: 0 },
   }] };
   const key = JSON.stringify(document);
@@ -267,7 +267,7 @@ function SelectionControls({
         </div>
         {single.bubble && <label><span>Speaker</span><select aria-label="Bubble speaker" value={single.bubble.speakerId ?? ''}
           onChange={(event) => onUpdateLayer(event.target.value
-            ? { ...single, bubble: { ...single.bubble!, speakerId: event.target.value } }
+            ? { ...single, bubble: { ...single.bubble!, speakerId: event.target.value, speakerAnchor: { x: 0.5, y: 0.62 } } }
             : detachBubble(single))}>
           <option value="">Free tail</option>
           {design.layers.filter((layer) => layer.kind === 'emoji').map((layer) =>

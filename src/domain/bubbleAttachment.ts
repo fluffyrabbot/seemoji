@@ -3,7 +3,7 @@ import { layerLocalBounds, layerLocalPointToWorld, worldPointToLayerLocal } from
 
 export function detachBubble(layer: TextLayer): TextLayer {
   if (!layer.bubble?.speakerId) return layer;
-  const { speakerId: _speakerId, ...bubble } = layer.bubble;
+  const { speakerId: _speakerId, speakerAnchor: _speakerAnchor, ...bubble } = layer.bubble;
   return { ...layer, bubble };
 }
 
@@ -14,11 +14,10 @@ export function resolveBubbleAttachments(design: DesignDocument): DesignDocument
     if (layer.kind !== 'text' || !layer.bubble?.speakerId) return layer;
     const speaker = design.layers.find((candidate) => candidate.id === layer.bubble!.speakerId && candidate.kind === 'emoji');
     if (!speaker) { changed = true; return detachBubble(layer); }
-    const target = layerLocalPointToWorld(speaker, { x: 0.5, y: 0.62 });
-    const body = layerLocalPointToWorld(layer, { x: layer.bounds.x + layer.bounds.width / 2, y: layer.bounds.y + layer.bounds.height / 2 });
-    const local = worldPointToLayerLocal(layer, { x: body.x + (target.x - body.x) * 0.8, y: body.y + (target.y - body.y) * 0.8 });
+    const target = layerLocalPointToWorld(speaker, layer.bubble.speakerAnchor ?? { x: 0.5, y: 0.62 });
+    const local = worldPointToLayerLocal(layer, target);
     if (!local) return layer;
-    const tail = { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) };
+    const tail = local;
     if (tail.x === layer.bubble.tail.x && tail.y === layer.bubble.tail.y) return layer;
     changed = true;
     return { ...layer, bubble: { ...layer.bubble, tail } };
@@ -36,4 +35,14 @@ export function bubbleSpeakerAt(design: DesignDocument, point: { x: number; y: n
     return local.x >= box.x && local.x <= box.x + box.width
       && local.y >= box.y && local.y <= box.y + box.height;
   });
+}
+
+/** Retain the rendered endpoint when migrating attachments from before explicit anchors. */
+export function preserveLegacyAnchors(design: DesignDocument): DesignDocument {
+  return { ...design, layers: design.layers.map((layer) => {
+    if (layer.kind !== 'text' || !layer.bubble?.speakerId || layer.bubble.speakerAnchor) return layer;
+    const speaker = design.layers.find((candidate) => candidate.id === layer.bubble!.speakerId);
+    const anchor = speaker && worldPointToLayerLocal(speaker, layerLocalPointToWorld(layer, layer.bubble.tail));
+    return anchor ? { ...layer, bubble: { ...layer.bubble, speakerAnchor: anchor } } : layer;
+  }) };
 }

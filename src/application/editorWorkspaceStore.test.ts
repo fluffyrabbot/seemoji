@@ -207,7 +207,7 @@ describe('EditorWorkspaceStore', () => {
     const reopened = new EditorWorkspaceStore(new WorkspaceController(new IndexedDbProjectRepository(factory, databaseName)));
     await reopened.load();
     const initial = reopened.getSnapshot().editor;
-    expect(initial.design.version).toBe(6);
+    expect(initial.design.version).toBe(7);
     expect(initial.design.groups).toEqual([{ id: 'group-1', name: 'Badge', layerIds: ['emoji-1', 'emoji-2'] }]);
     expect(initial.selectedLayerIds).toEqual(['emoji-1', 'emoji-2']);
     reopened.dispatch({ type: 'update-layer-transforms', updates: translateSelection(

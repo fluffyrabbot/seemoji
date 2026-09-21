@@ -11,7 +11,7 @@
 ## Overview
 
 > **Current scene format (2026-09-19):** the editor now normalizes recipes to
-> `DesignDocumentV6`, with durable named selection groups and canvas layouts. V1–V3 designs
+> `DesignDocumentV7`, with durable named selection groups and canvas layouts. V1–V3 designs
 > migrate through the design codec. The V2 references below describe the original
 > pack rollout; emoji source identities and pinned artwork semantics are unchanged.
 
@@ -1503,3 +1503,9 @@ with the candidate speaker highlighted while dragging; Escape cancels. Speaker m
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
 V5 projects migrate to V6 without adding attachments.
+
+Tail drops retain an exact speaker-local anchor through movement, rotation, and
+resizing. Choosing a speaker from the card uses a default anchor near its lower
+center. Detaching removes the anchor while keeping the endpoint. V6 attachments
+migrate to V7 using their existing endpoints, preserving the appearance of saved
+artwork. Tail coordinates may extend outside the text layer or page.

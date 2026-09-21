@@ -547,8 +547,8 @@ export default function Preview({
       if (local && tail.layer.bubble && (tail.moved || Math.hypot(local.x - tail.layer.bubble.tail.x, local.y - tail.layer.bubble.tail.y) > 0.003)) {
         const speaker = world && bubbleSpeakerAt(design, world);
         const next: TextLayer = { ...tail.layer, bubble: { ...detachBubble(tail.layer).bubble!,
-          ...(speaker ? { speakerId: speaker.id } : {}),
-          tail: { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
+          ...(speaker ? { speakerId: speaker.id, speakerAnchor: worldPointToLayerLocal(speaker, world!)! } : {}),
+          tail: speaker ? local : { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
         tailRef.current = { ...tail, layer: next, moved: true }; setTailDraft(next);
       }
       return;

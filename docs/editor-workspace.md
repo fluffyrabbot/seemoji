@@ -29,9 +29,9 @@ quick access without copying its design. **Make a copy** is the explicit copy
 operation and creates a new project with a new identity.
 
 Project JSON exports use a versioned envelope containing identity, name,
-timestamps, star metadata, and a strictly decoded `DesignDocumentV6`. Import also
+timestamps, star metadata, and a strictly decoded `DesignDocumentV7`. Import also
 accepts bare V1 recipes or V2 scenes, migrates them with an explicit empty group
-collection. V1–V3 documents migrate to the default canvas layout. Import always creates a new project identity. Current V6 scenes require
+collection. V1–V3 documents migrate to the default canvas layout. Import always creates a new project identity. Current V7 scenes require
 their group collection and reject invalid membership.
 Projects use IndexedDB. Canvas layout is project state and renders into PNGs.
 Grid visibility, snapping, and guide preferences remain separate device settings
@@ -204,3 +204,9 @@ with the candidate speaker highlighted while dragging; Escape cancels. Speaker m
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
 V5 projects migrate to V6 without adding attachments.
+
+Tail drops retain an exact speaker-local anchor through movement, rotation, and
+resizing. Choosing a speaker from the card uses a default anchor near its lower
+center. Detaching removes the anchor while keeping the endpoint. V6 attachments
+migrate to V7 using their existing endpoints, preserving the appearance of saved
+artwork. Tail coordinates may extend outside the text layer or page.

@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-214,000 raw bytes and 67,000 gzip-9 bytes) and all deferred or otherwise
+215,000 raw bytes and 67,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 and the full emoji search catalog loaded only on interaction. See
@@ -79,7 +79,7 @@ EditorWorkspaceStore ────────► WorkspaceController ───�
    └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
-DesignDocumentV6 scene + canvas layout + named selection groups
+DesignDocumentV7 scene + canvas layout + named selection groups
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -124,7 +124,7 @@ not treat Strict Mode behavior as equivalent between the two runtimes.
 
 ## Design and rendering invariants
 
-`DesignDocumentV6` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
+`DesignDocumentV7` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
 common scene-node contract for emoji, pressure strokes, geometric shapes, text,
 and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
@@ -254,3 +254,9 @@ with the candidate speaker highlighted while dragging; Escape cancels. Speaker m
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
 V5 projects migrate to V6 without adding attachments.
+
+Tail drops retain an exact speaker-local anchor through movement, rotation, and
+resizing. Choosing a speaker from the card uses a default anchor near its lower
+center. Detaching removes the anchor while keeping the endpoint. V6 attachments
+migrate to V7 using their existing endpoints, preserving the appearance of saved
+artwork. Tail coordinates may extend outside the text layer or page.

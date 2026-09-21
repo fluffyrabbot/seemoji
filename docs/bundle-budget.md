@@ -264,3 +264,12 @@ the candidate highlight is an editor-only SVG overlay. No dependency was added.
 
 Escape now resolves against current reducer state, avoiding stale group-edit
 state between consecutive key presses. The change remains within existing budgets.
+
+### Exact speaker-local attachment anchors
+
+Initial JavaScript moves from 213,983 raw / 66,429 gzip-9 bytes to 214,563 raw /
+66,558 gzip-9 bytes. Deferred code remains 11,062 raw (4,330 gzip-9 bytes). The
+initial raw ceiling becomes 215,000; compressed and deferred ceilings stay fixed.
+Anchors reuse the affine coordinate conversions and the existing attachment
+resolver. Migration preserves old endpoints. No dependency was added; this
+synchronous document geometry cannot be deferred without delaying edits/import.

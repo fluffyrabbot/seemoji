@@ -1,3 +1,4 @@
+import { layerLocalPointToWorld } from '../domain/sceneGeometry';
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_DESIGN, DEFAULT_TRANSFORM, type TextLayer } from '../domain/design';
 import { bubbleSpeakerAt, detachBubble, resolveBubbleAttachments } from '../domain/bubbleAttachment';
@@ -55,4 +56,41 @@ it('targets the topmost visible emoji within transformed bounds', () => {
   expect(bubbleSpeakerAt(scene, { x: 0.98, y: 0.98 })).toBeUndefined();
   // Inside the rotated bounding rectangle, outside the actual rotated square.
   expect(bubbleSpeakerAt({ ...scene, layers: [top] }, { x: 0.72, y: 0.72 })).toBeUndefined();
+});
+
+
+it.each([
+  { x: 0.2, y: -0.1, rotate: 0, scaleX: 1, scaleY: 1 },
+  { x: 0, y: 0, rotate: 90, scaleX: 1, scaleY: 1 },
+  { x: -0.1, y: 0.15, rotate: 35, scaleX: 2, scaleY: 0.5 },
+])('keeps an exact anchor through speaker transforms %o', (transform) => {
+  const anchor = { x: 0.68, y: 0.31 };
+  const attached = { ...text, transform: { ...text.transform, rotate: -25, scaleX: 0.4 },
+    bubble: { ...text.bubble!, speakerAnchor: anchor } };
+  const start = { ...initial, design: resolveBubbleAttachments({ ...design, layers: [speaker, attached] }) };
+  const moved = editorReducer(start, { type: 'update-layer-transform', layerId: speaker.id,
+    transform: { ...speaker.transform, ...transform } });
+  const actual = moved.design.layers[1] as TextLayer;
+  const tip = layerLocalPointToWorld(actual, actual.bubble!.tail);
+  const expected = layerLocalPointToWorld(moved.design.layers[0]!, anchor);
+  expect(tip.x).toBeCloseTo(expected.x, 10);
+  expect(tip.y).toBeCloseTo(expected.y, 10);
+  expect(actual.bubble!.speakerAnchor).toEqual(anchor);
+  expect(decodeDesignDocument(moved.design).ok).toBe(true);
+  expect(detachBubble(actual).bubble?.speakerAnchor).toBeUndefined();
+  expect(editorReducer(moved, { type: 'undo' }).design).toEqual(start.design);
+});
+
+it('migrates old attachments without moving their endpoints and rejects invalid anchors', () => {
+  const old = { ...design, version: 6, layers: [speaker, text] };
+  const migrated = decodeDesignDocument(old);
+  expect(migrated.ok).toBe(true);
+  if (!migrated.ok) return;
+  const migratedText = migrated.value.layers[1] as TextLayer;
+  expect(migratedText.bubble!.tail.x).toBeCloseTo(text.bubble!.tail.x, 10);
+  expect(migratedText.bubble!.tail.y).toBeCloseTo(text.bubble!.tail.y, 10);
+  expect(migratedText.bubble!.speakerAnchor).toBeDefined();
+  for (const speakerAnchor of [null, { x: NaN, y: 0 }, { x: 0 }, { x: 0, y: Infinity }]) {
+    expect(decodeDesignDocument({ ...design, layers: [speaker, { ...text, bubble: { ...text.bubble, speakerAnchor } }] }).ok).toBe(false);
+  }
 });

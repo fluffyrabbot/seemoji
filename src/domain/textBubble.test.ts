@@ -57,7 +57,7 @@ describe('text bubbles', () => {
   it('round-trips bubble state and rejects malformed tails', () => {
     const design = { ...DEFAULT_DESIGN, layers: [...DEFAULT_DESIGN.layers, setTextBubble(text, 'speech')] };
     expect(decodeDesignDocument(design)).toEqual({ ok: true, value: design });
-    for (const bubble of [null, { kind: 'other' }, { kind: 'speech', tail: { x: NaN, y: 0.2 } }, { kind: 'thought', tail: { x: 2, y: 0 } }]) {
+    for (const bubble of [null, { kind: 'other' }, { kind: 'speech', tail: { x: NaN, y: 0.2 } }, { kind: 'thought', tail: { x: Infinity, y: 0 } }]) {
       expect(decodeDesignDocument({ ...design, layers: [...DEFAULT_DESIGN.layers, { ...text, bubble }] }).ok).toBe(false);
     }
   });

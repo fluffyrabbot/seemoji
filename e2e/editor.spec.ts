@@ -220,7 +220,7 @@ const exportProject = async (page: Page) => {
       readonly name: string;
       readonly text?: string;
       readonly fontSize?: number;
-      readonly bubble?: { readonly kind: string; readonly speakerId?: string; readonly tail: { readonly x: number; readonly y: number } };
+      readonly bubble?: { readonly kind: string; readonly speakerId?: string; readonly speakerAnchor?: { readonly x: number; readonly y: number }; readonly tail: { readonly x: number; readonly y: number } };
       readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
       readonly source?: { readonly grapheme: string };
       readonly appearance?: {
@@ -1834,7 +1834,7 @@ test('keeps named groups through history, reload, duplication, and project impor
   await page.getByRole('textbox', { name: /Rename group/ }).fill('Badge');
   await page.getByRole('textbox', { name: /Rename group/ }).press('Enter');
   const named = await exportProject(page);
-  expect(named.design.version).toBe(6);
+  expect(named.design.version).toBe(7);
   expect(named.design.groups).toHaveLength(1);
   expect(named.design.groups[0]!.name).toBe('Badge');
   await page.getByRole('button', { name: /Undo/ }).click();
@@ -2366,8 +2366,21 @@ test('dropping a tail onto an emoji highlights and attaches in one undo step', a
   await expect(page.locator('.bubble-speaker-target')).toHaveCount(0);
   const attached = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
   expect(attached.bubble!.speakerId).toBeTruthy();
+  expect(attached.bubble!.speakerAnchor!.x).toBeCloseTo(0.55, 2);
+  expect(attached.bubble!.speakerAnchor!.y).toBeCloseTo(0.55, 2);
+  expect(attached.bubble!.tail.x).toBeCloseTo(0.55, 2);
+  expect(attached.bubble!.tail.y).toBeCloseTo(0.55, 2);
   await page.getByRole('button', { name: /Undo/ }).click();
   expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
   await page.getByRole('button', { name: /Redo/ }).click();
   await expect(speaker).toHaveValue(attached.bubble!.speakerId!);
+  await page.locator('.layer-select').filter({ hasText: 'Emoji' }).click();
+  await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
+  const rotated = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(rotated.bubble!.tail.x).toBeCloseTo(0.45, 2);
+  expect(rotated.bubble!.tail.y).toBeCloseTo(0.55, 2);
+  expect(rotated.bubble!.speakerAnchor).toEqual(attached.bubble!.speakerAnchor);
+  await page.reload();
+  const restored = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(restored.bubble).toEqual(rotated.bubble);
 });

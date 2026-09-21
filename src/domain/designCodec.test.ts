@@ -53,7 +53,7 @@ describe('design document codec', () => {
     const decoded = decodeDesignDocument(versionOne);
     expect(decoded.ok).toBe(true);
     if (decoded.ok) {
-      expect(decoded.value.version).toBe(6);
+      expect(decoded.value.version).toBe(7);
       expect(getEmojiLayer(decoded.value).transform).toMatchObject({ x: 0, y: 0, rotate: 18 });
     }
   });
