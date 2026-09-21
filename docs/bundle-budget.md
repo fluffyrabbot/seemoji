@@ -273,3 +273,12 @@ initial raw ceiling becomes 215,000; compressed and deferred ceilings stay fixed
 Anchors reuse the affine coordinate conversions and the existing attachment
 resolver. Migration preserves old endpoints. No dependency was added; this
 synchronous document geometry cannot be deferred without delaying edits/import.
+
+### Compact speaker chip and keyboard picker
+
+Initial JavaScript moves from 214,563 raw / 66,558 gzip-9 bytes to 215,791 raw /
+66,897 gzip-9 bytes. Deferred code stays 11,062 raw (4,331 gzip-9 bytes). The raw
+ceiling becomes 216,000; other ceilings stay fixed. A small native disclosure
+replaces the select control and adds focus restoration and arrow-key navigation.
+No dependency is added. Deferring this small inspector component would add a
+loading state to a primary interaction without meaningful savings.

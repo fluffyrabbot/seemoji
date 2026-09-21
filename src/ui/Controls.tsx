@@ -1,4 +1,4 @@
-import { detachBubble } from '../domain/bubbleAttachment';
+import BubbleSpeaker from './BubbleSpeaker';
 import { placeTextBubble } from '../domain/bubblePlacement';
 import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import type { AdvancedControlsProps } from './AdvancedControls';
@@ -265,14 +265,7 @@ function SelectionControls({
             {kind[0]!.toUpperCase() + kind.slice(1)}
           </button>)}
         </div>
-        {single.bubble && <label><span>Speaker</span><select aria-label="Bubble speaker" value={single.bubble.speakerId ?? ''}
-          onChange={(event) => onUpdateLayer(event.target.value
-            ? { ...single, bubble: { ...single.bubble!, speakerId: event.target.value, speakerAnchor: { x: 0.5, y: 0.62 } } }
-            : detachBubble(single))}>
-          <option value="">Free tail</option>
-          {design.layers.filter((layer) => layer.kind === 'emoji').map((layer) =>
-            <option key={layer.id} value={layer.id}>{layer.name}{layer.visible ? '' : ' (hidden)'}</option>)}
-        </select></label>}
+        {single.bubble && <BubbleSpeaker layer={single} design={design} onChange={onUpdateLayer} />}
         <label><span>Text</span><textarea id="editor-text" rows={3} maxLength={500} value={single.text}
           onChange={(event) => updateSingle({ ...single, text: event.target.value || ' ' }, 'text')}
           onBlur={onCommit} /></label>

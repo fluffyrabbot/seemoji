@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-215,000 raw bytes and 67,000 gzip-9 bytes) and all deferred or otherwise
+216,000 raw bytes and 67,000 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 and the full emoji search catalog loaded only on interaction. See
@@ -248,7 +248,7 @@ New comic bubbles fit inside their nearest panel with a 6% margin and aim toward
 a nearby visible emoji in that panel. Subsequent bubble style changes preserve
 manual geometry; text continues to shrink within the chosen box.
 
-Bubble Speaker selects an optional emoji attachment; Free tail or dropping the
+The speaker chip shows the attached emoji; Detach or dropping the
 tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
 with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
@@ -260,3 +260,8 @@ resizing. Choosing a speaker from the card uses a default anchor near its lower
 center. Detaching removes the anchor while keeping the endpoint. V6 attachments
 migrate to V7 using their existing endpoints, preserving the appearance of saved
 artwork. Tail coordinates may extend outside the text layer or page.
+
+Free tails show a drag-to-attach hint and Choose speaker. The attached emoji chip
+opens the same picker to change speakers. Arrow keys navigate choices, Enter
+selects, and Escape closes the picker and restores focus without editing artwork.
+Selecting the current speaker preserves its exact anchor. Detach is one undo step.

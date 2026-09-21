@@ -942,3 +942,15 @@ textarea.canvas-text-editor { width: 100%; height: 100%; line-height: 1.2; resiz
 
 .bubble-speaker-target { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 6; }
 .bubble-speaker-target polygon { fill: #7268ff26; stroke: #8178ff; stroke-width: 3; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+
+.bubble-speaker { min-width: 0; }
+.speaker-actions { display: flex; align-items: flex-start; gap: .4rem; }
+.speaker-picker { position: relative; flex: 1; min-width: 0; }
+.speaker-picker summary { display: flex; align-items: center; gap: .35rem; padding: .45rem .6rem; border: 1px solid #454855; border-radius: 8px; cursor: pointer; font-size: .8rem; list-style: none; }
+.speaker-picker summary::-webkit-details-marker { display: none; }
+.speaker-picker summary span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.speaker-picker summary:focus-visible { outline: 2px solid #7c87ff; outline-offset: 2px; }
+.speaker-choices { display: grid; gap: .25rem; margin-top: .3rem; max-height: 12rem; overflow-y: auto; }
+.speaker-choices button { text-align: left; overflow-wrap: anywhere; }
+.speaker-choices button[aria-pressed='true'] { border-color: #7c87ff; }
+.bubble-speaker small { display: block; margin-top: .35rem; color: #a5adba; font-size: .75rem; }

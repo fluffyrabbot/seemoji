@@ -2298,8 +2298,9 @@ test('attached bubble tails follow speakers, persist, and detach on manual drag'
   await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
   await page.keyboard.press('Enter');
   await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
-  const speaker = page.getByRole('combobox', { name: 'Bubble speaker', exact: true });
-  await speaker.selectOption({ label: 'Emoji' });
+  const speaker = page.locator('.bubble-speaker');
+  await page.getByText('Choose speaker', { exact: true }).click();
+  await page.getByRole('button', { name: 'Attach to Emoji', exact: true }).click();
   const before = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
   expect(before.bubble!.speakerId).toBeTruthy();
   await page.locator('.layer-select').filter({ hasText: 'Emoji' }).click();
@@ -2311,7 +2312,7 @@ test('attached bubble tails follow speakers, persist, and detach on manual drag'
   await page.locator('.layer-select').filter({ hasText: 'Text' }).click();
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   await page.reload();
-  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+  await expect(speaker).toHaveAttribute('data-speaker-id', before.bubble!.speakerId!);
   const tail = page.getByRole('button', { name: 'Bubble tail', exact: true });
   const drag = async (cancel: boolean) => {
     await tail.scrollIntoViewIfNeeded();
@@ -2326,12 +2327,12 @@ test('attached bubble tails follow speakers, persist, and detach on manual drag'
     await page.mouse.up();
   };
   await drag(true);
-  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+  await expect(speaker).toHaveAttribute('data-speaker-id', before.bubble!.speakerId!);
   await drag(false);
-  await expect(speaker).toHaveValue('');
+  await expect(speaker).toHaveAttribute('data-speaker-id', '');
   expect((await exportProject(page)).design.layers.find(({ id }) => id === before.id)!.bubble!.speakerId).toBeUndefined();
   await page.getByRole('button', { name: /Undo/ }).click();
-  await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+  await expect(speaker).toHaveAttribute('data-speaker-id', before.bubble!.speakerId!);
 });
 
 
@@ -2341,7 +2342,7 @@ test('dropping a tail onto an emoji highlights and attaches in one undo step', a
   await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hello');
   await page.keyboard.press('Enter');
   await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
-  const speaker = page.getByRole('combobox', { name: 'Bubble speaker', exact: true });
+  const speaker = page.locator('.bubble-speaker');
   const original = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
   const dragOntoSpeaker = async () => {
     const tail = page.getByRole('button', { name: 'Bubble tail', exact: true });
@@ -2358,11 +2359,11 @@ test('dropping a tail onto an emoji highlights and attaches in one undo step', a
   await page.keyboard.press('Escape');
   await page.mouse.up();
   await expect(page.locator('.bubble-speaker-target')).toHaveCount(0);
-  await expect(speaker).toHaveValue('');
+  await expect(speaker).toHaveAttribute('data-speaker-id', '');
   expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
   await dragOntoSpeaker();
   await page.mouse.up();
-  await expect(speaker).not.toHaveValue('');
+  await expect(speaker).not.toHaveAttribute('data-speaker-id', '');
   await expect(page.locator('.bubble-speaker-target')).toHaveCount(0);
   const attached = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
   expect(attached.bubble!.speakerId).toBeTruthy();
@@ -2373,7 +2374,7 @@ test('dropping a tail onto an emoji highlights and attaches in one undo step', a
   await page.getByRole('button', { name: /Undo/ }).click();
   expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
   await page.getByRole('button', { name: /Redo/ }).click();
-  await expect(speaker).toHaveValue(attached.bubble!.speakerId!);
+  await expect(speaker).toHaveAttribute('data-speaker-id', attached.bubble!.speakerId!);
   await page.locator('.layer-select').filter({ hasText: 'Emoji' }).click();
   await page.getByRole('spinbutton', { name: 'Rotate', exact: true }).fill('90');
   const rotated = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
@@ -2381,6 +2382,42 @@ test('dropping a tail onto an emoji highlights and attaches in one undo step', a
   expect(rotated.bubble!.tail.y).toBeCloseTo(0.55, 2);
   expect(rotated.bubble!.speakerAnchor).toEqual(attached.bubble!.speakerAnchor);
   await page.reload();
+  await expect(page.locator('.workspace-menu')).toBeVisible();
   const restored = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
   expect(restored.bubble).toEqual(rotated.bubble);
+});
+
+test('speaker chip supports keyboard picking, Escape, and one-click detach without losing anchors', async ({ page }) => {
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
+  await page.keyboard.press('Enter');
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  const picker = page.locator('.speaker-picker');
+  const trigger = picker.locator('summary');
+  await expect(page.getByText('Drag the tail onto an emoji to attach.', { exact: true })).toBeVisible();
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(picker).toHaveAttribute('open', '');
+  await page.keyboard.press('Escape');
+  await expect(picker).not.toHaveAttribute('open', '');
+  await expect(trigger).toBeFocused();
+  await expect(page.locator('.layer-item.selected')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('button', { name: 'Attach to Emoji', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(trigger).toHaveAttribute('aria-label', 'Change speaker: Emoji');
+  await expect(trigger).toBeFocused();
+  const attached = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  await trigger.click();
+  await page.getByRole('button', { name: 'Attach to Emoji', exact: true }).click();
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === attached.id)!.bubble).toEqual(attached.bubble);
+  await page.getByRole('button', { name: 'Detach speaker', exact: true }).click();
+  await expect(trigger).toHaveAttribute('aria-label', 'Choose speaker');
+  await expect(trigger).toBeFocused();
+  const detached = (await exportProject(page)).design.layers.find(({ id }) => id === attached.id)!;
+  expect(detached.bubble!.speakerId).toBeUndefined();
+  expect(detached.bubble!.tail).toEqual(attached.bubble!.tail);
+  await page.getByRole('button', { name: /Undo/ }).click();
+  await expect(trigger).toHaveAttribute('aria-label', 'Change speaker: Emoji');
 });

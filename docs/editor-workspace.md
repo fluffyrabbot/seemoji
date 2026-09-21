@@ -198,7 +198,7 @@ V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
 
-Bubble Speaker selects an optional emoji attachment; Free tail or dropping the
+The speaker chip shows the attached emoji; Detach or dropping the
 tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
 with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
@@ -210,3 +210,8 @@ resizing. Choosing a speaker from the card uses a default anchor near its lower
 center. Detaching removes the anchor while keeping the endpoint. V6 attachments
 migrate to V7 using their existing endpoints, preserving the appearance of saved
 artwork. Tail coordinates may extend outside the text layer or page.
+
+Free tails show a drag-to-attach hint and Choose speaker. The attached emoji chip
+opens the same picker to change speakers. Arrow keys navigate choices, Enter
+selects, and Escape closes the picker and restores focus without editing artwork.
+Selecting the current speaker preserves its exact anchor. Detach is one undo step.
