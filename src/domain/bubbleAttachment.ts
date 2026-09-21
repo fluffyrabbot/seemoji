@@ -1,5 +1,5 @@
 import type { DesignDocument, TextLayer } from './design';
-import { layerLocalPointToWorld, worldPointToLayerLocal } from './sceneGeometry';
+import { layerLocalBounds, layerLocalPointToWorld, worldPointToLayerLocal } from './sceneGeometry';
 
 export function detachBubble(layer: TextLayer): TextLayer {
   if (!layer.bubble?.speakerId) return layer;
@@ -24,4 +24,16 @@ export function resolveBubbleAttachments(design: DesignDocument): DesignDocument
     return { ...layer, bubble: { ...layer.bubble, tail } };
   });
   return changed ? { ...design, layers } : design;
+}
+
+/** Pick the topmost visible emoji using its transformed local bounds. */
+export function bubbleSpeakerAt(design: DesignDocument, point: { x: number; y: number }) {
+  return [...design.layers].reverse().find((layer) => {
+    if (layer.kind !== 'emoji' || !layer.visible || layer.opacity === 0) return false;
+    const local = worldPointToLayerLocal(layer, point);
+    if (!local) return false;
+    const box = layerLocalBounds(layer);
+    return local.x >= box.x && local.x <= box.x + box.width
+      && local.y >= box.y && local.y <= box.y + box.height;
+  });
 }

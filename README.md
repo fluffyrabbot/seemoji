@@ -248,8 +248,9 @@ New comic bubbles fit inside their nearest panel with a 6% margin and aim toward
 a nearby visible emoji in that panel. Subsequent bubble style changes preserve
 manual geometry; text continues to shrink within the chosen box.
 
-Bubble Speaker selects an optional emoji attachment; Free tail or dragging the
-tail detaches it. Speaker movement updates the tail in the same undo transaction.
+Bubble Speaker selects an optional emoji attachment; Free tail or dropping the
+tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
+with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
 V5 projects migrate to V6 without adding attachments.

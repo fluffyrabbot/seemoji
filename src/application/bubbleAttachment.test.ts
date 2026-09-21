@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_DESIGN, DEFAULT_TRANSFORM, type TextLayer } from '../domain/design';
-import { detachBubble, resolveBubbleAttachments } from '../domain/bubbleAttachment';
+import { bubbleSpeakerAt, detachBubble, resolveBubbleAttachments } from '../domain/bubbleAttachment';
 import { decodeDesignDocument } from '../domain/designCodec';
 import { editorReducer, INITIAL_EDITOR_STATE } from './editor';
 
@@ -43,4 +43,16 @@ describe('bubble speaker attachment transactions', () => {
     expect(decodeDesignDocument({ ...design, layers: [speaker, { ...text, bubble: { ...text.bubble, speakerId: text.id } }] }).ok).toBe(false);
     expect(decodeDesignDocument({ ...design, version: 5, layers: [speaker, detached] })).toEqual({ ok: true, value: { ...design, layers: [speaker, detached] } });
   });
+});
+
+
+it('targets the topmost visible emoji within transformed bounds', () => {
+  const top = { ...speaker, id: 'top', transform: { ...speaker.transform, rotate: 45, scaleX: 0.5, scaleY: 0.5 } };
+  const scene = { ...design, layers: [speaker, top, text] };
+  expect(bubbleSpeakerAt(scene, { x: 0.5, y: 0.5 })?.id).toBe('top');
+  expect(bubbleSpeakerAt({ ...scene, layers: [speaker, { ...top, visible: false }] }, { x: 0.5, y: 0.5 })?.id).toBe(speaker.id);
+  expect(bubbleSpeakerAt({ ...scene, layers: [speaker, { ...top, opacity: 0 }] }, { x: 0.5, y: 0.5 })?.id).toBe(speaker.id);
+  expect(bubbleSpeakerAt(scene, { x: 0.98, y: 0.98 })).toBeUndefined();
+  // Inside the rotated bounding rectangle, outside the actual rotated square.
+  expect(bubbleSpeakerAt({ ...scene, layers: [top] }, { x: 0.72, y: 0.72 })).toBeUndefined();
 });

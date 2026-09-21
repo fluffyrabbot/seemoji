@@ -2209,6 +2209,7 @@ test('one-click bubbles wrap, export, persist, and move their tail as one undoab
 });
 
 test('rotated bubble tails follow pointer coordinates and Escape cancels a drag', async ({ page }) => {
+  await page.getByRole('button', { name: 'Hide “Emoji”', exact: true }).click();
   await placeText(page);
   await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hi');
   await page.keyboard.press('Enter');
@@ -2318,7 +2319,9 @@ test('attached bubble tails follow speakers, persist, and detach on manual drag'
     if (!box) throw new Error('No tail handle');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 35, box.y + box.height / 2 + 25, { steps: 4 });
+    const world = await page.locator('.canvas-world').boundingBox();
+    if (!world) throw new Error('Missing canvas');
+    await page.mouse.move(world.x + world.width * 0.98, world.y + world.height * 0.98, { steps: 4 });
     if (cancel) await page.keyboard.press('Escape');
     await page.mouse.up();
   };
@@ -2329,4 +2332,42 @@ test('attached bubble tails follow speakers, persist, and detach on manual drag'
   expect((await exportProject(page)).design.layers.find(({ id }) => id === before.id)!.bubble!.speakerId).toBeUndefined();
   await page.getByRole('button', { name: /Undo/ }).click();
   await expect(speaker).toHaveValue(before.bubble!.speakerId!);
+});
+
+
+test('dropping a tail onto an emoji highlights and attaches in one undo step', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 });
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Hello');
+  await page.keyboard.press('Enter');
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  const speaker = page.getByRole('combobox', { name: 'Bubble speaker', exact: true });
+  const original = (await exportProject(page)).design.layers.find(({ kind }) => kind === 'text')!;
+  const dragOntoSpeaker = async () => {
+    const tail = page.getByRole('button', { name: 'Bubble tail', exact: true });
+    await tail.scrollIntoViewIfNeeded();
+    const box = await tail.boundingBox();
+    const world = await page.locator('.canvas-world').boundingBox();
+    if (!box || !world) throw new Error('Missing tail or canvas');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(world.x + world.width * 0.55, world.y + world.height * 0.55, { steps: 4 });
+    await expect(page.getByRole('img', { name: 'Attach tail to Emoji', exact: true })).toBeVisible();
+  };
+  await dragOntoSpeaker();
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await expect(page.locator('.bubble-speaker-target')).toHaveCount(0);
+  await expect(speaker).toHaveValue('');
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
+  await dragOntoSpeaker();
+  await page.mouse.up();
+  await expect(speaker).not.toHaveValue('');
+  await expect(page.locator('.bubble-speaker-target')).toHaveCount(0);
+  const attached = (await exportProject(page)).design.layers.find(({ id }) => id === original.id)!;
+  expect(attached.bubble!.speakerId).toBeTruthy();
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design.layers.find(({ id }) => id === original.id)).toEqual(original);
+  await page.getByRole('button', { name: /Redo/ }).click();
+  await expect(speaker).toHaveValue(attached.bubble!.speakerId!);
 });

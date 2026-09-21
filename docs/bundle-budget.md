@@ -254,3 +254,10 @@ A shared domain resolver updates attachments on editor transactions and import,
 so rendering and export consume the same concrete geometry. No dependency was
 added. The resolver is synchronous core editing logic and cannot be deferred
 without introducing asynchronous document updates.
+
+### Drag-to-attach bubble tails
+
+Initial JavaScript moves from 213,335 raw / 66,197 gzip-9 bytes to 213,944 raw /
+66,417 gzip-9 bytes. Deferred code remains 11,062 raw / 4,330 gzip-9 bytes.
+Existing ceilings are unchanged. Hit testing reuses inverse affine transforms;
+the candidate highlight is an editor-only SVG overlay. No dependency was added.

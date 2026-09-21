@@ -1497,8 +1497,9 @@ V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
 
-Bubble Speaker selects an optional emoji attachment; Free tail or dragging the
-tail detaches it. Speaker movement updates the tail in the same undo transaction.
+Bubble Speaker selects an optional emoji attachment; Free tail or dropping the
+tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
+with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
 V5 projects migrate to V6 without adding attachments.

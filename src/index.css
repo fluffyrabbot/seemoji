@@ -939,3 +939,6 @@ textarea.canvas-text-editor { width: 100%; height: 100%; line-height: 1.2; resiz
 .inspector-object-fields textarea { width: 100%; resize: vertical; box-sizing: border-box; font: inherit; color: inherit; background: #191b23; border: 1px solid #454855; border-radius: 8px; padding: .4rem; }
 .bubble-tail-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 7; }
 .bubble-tail-overlay circle { pointer-events: all; cursor: crosshair; fill: #fff; stroke: #4c56bf; stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+.bubble-speaker-target { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 6; }
+.bubble-speaker-target polygon { fill: #7268ff26; stroke: #8178ff; stroke-width: 3; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }

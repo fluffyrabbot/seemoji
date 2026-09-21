@@ -1,4 +1,4 @@
-import { detachBubble } from '../domain/bubbleAttachment';
+import { bubbleSpeakerAt, detachBubble } from '../domain/bubbleAttachment';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
@@ -189,7 +189,7 @@ export default function Preview({
   const draftRef = useRef<DraftStroke | null>(null);
   const marqueeRef = useRef<Marquee | null>(null);
   const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; shiftKey: boolean; altKey: boolean; id: string; color: string } | null>(null);
-  const tailRef = useRef<{ pointerId: number; layer: TextLayer } | null>(null);
+  const tailRef = useRef<{ pointerId: number; layer: TextLayer; moved: boolean } | null>(null);
   const [tailDraft, setTailDraft] = useState<TextLayer | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const editingText = design.layers.find((layer) => layer.id === editingTextId && layer.visible);
@@ -544,10 +544,12 @@ export default function Preview({
     if (tail?.pointerId === event.pointerId) {
       const world = pointInCanvas(event);
       const local = world && worldPointToLayerLocal(tail.layer, world);
-      if (local && tail.layer.bubble && Math.hypot(local.x - tail.layer.bubble.tail.x, local.y - tail.layer.bubble.tail.y) > 0.003) {
+      if (local && tail.layer.bubble && (tail.moved || Math.hypot(local.x - tail.layer.bubble.tail.x, local.y - tail.layer.bubble.tail.y) > 0.003)) {
+        const speaker = world && bubbleSpeakerAt(design, world);
         const next: TextLayer = { ...tail.layer, bubble: { ...detachBubble(tail.layer).bubble!,
+          ...(speaker ? { speakerId: speaker.id } : {}),
           tail: { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
-        tailRef.current = { ...tail, layer: next }; setTailDraft(next);
+        tailRef.current = { ...tail, layer: next, moved: true }; setTailDraft(next);
       }
       return;
     }
@@ -657,8 +659,10 @@ export default function Preview({
   const endGesture = (event: PointerEvent) => {
     if (tailRef.current?.pointerId === event.pointerId) {
       continueGesture(event);
-      const layer = tailRef.current.layer;
-      tailRef.current = null; setTailDraft(null); onEditText(layer); return;
+      const { layer, moved } = tailRef.current;
+      tailRef.current = null; setTailDraft(null);
+      if (moved) onEditText(layer);
+      return;
     }
     if (endTouch(event)) return;
     if (endPan(event)) return;
@@ -1051,6 +1055,15 @@ export default function Preview({
                 </g>
               </svg>
             )}
+            {tailDraft?.bubble?.speakerId && (() => {
+              const speaker = design.layers.find((layer) => layer.id === tailDraft.bubble!.speakerId);
+              if (!speaker) return null;
+              const points = layerWorldCorners(speaker).map((point) => `${point.x * previewRenderSize},${point.y * previewRenderSize}`).join(' ');
+              return <svg className="bubble-speaker-target" viewBox={`0 0 ${previewRenderSize} ${previewRenderSize}`}
+                role="img" aria-label={`Attach tail to ${speaker.name}`}>
+                <polygon points={points} />
+              </svg>;
+            })()}
             {!editingTextId && tool === 'select' && selectedLayers.length === 1 && (() => {
               const text = tailDraft ?? selectedLayers[0];
               if (text?.kind !== 'text' || !text.bubble || !text.visible) return null;
@@ -1072,7 +1085,7 @@ export default function Preview({
                     event.preventDefault(); event.stopPropagation();
                     stageRef.current?.focus({ preventScroll: true });
                     stageRef.current?.setPointerCapture(event.pointerId);
-                    tailRef.current = { pointerId: event.pointerId, layer: text }; setTailDraft(text);
+                    tailRef.current = { pointerId: event.pointerId, layer: text, moved: false }; setTailDraft(text);
                   }} />
               </svg>;
             })()}
