@@ -282,3 +282,13 @@ ceiling becomes 216,000; other ceilings stay fixed. A small native disclosure
 replaces the select control and adds focus restoration and arrow-key navigation.
 No dependency is added. Deferring this small inspector component would add a
 loading state to a primary interaction without meaningful savings.
+
+### Minimal visual refresh and docked export
+
+Initial JavaScript moves from 215,791 raw / 66,897 gzip-9 bytes to 217,225 raw /
+67,300 gzip-9 bytes. Deferred code stays 11,062 raw (4,331 gzip-9 bytes). The
+initial ceilings become 218,000 raw / 67,500 gzip-9; deferred ceilings stay fixed.
+Most of the increase is the portal that docks the export bar in the header on wide
+layouts (about 700 raw / 240 gzip-9 bytes) plus the wordmark and a media-query
+hook. The wordmark's emoji is a CSS data URI and undo/redo use text glyphs to
+keep icon cost out of JavaScript. No dependency is added.

@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { Ellipsis } from 'lucide-react';
 import type { StorageHealth } from '../application/services';
 
 interface Props {
@@ -29,7 +30,9 @@ export default function WorkspaceMenu({ starred, storageHealth, busy, onSaveNow,
 
   return (
     <details className="workspace-menu" ref={detailsRef}>
-      <summary>Project menu</summary>
+      <summary title="Project menu">
+        <span className="sr-only">Project menu</span><Ellipsis size={17} aria-hidden="true" />
+      </summary>
       <div className="workspace-menu-popover" aria-label="Project and workspace actions">
         <strong>Project</strong>
         <button type="button" disabled={busy} onClick={() => run(onToggleStar)}>

@@ -217,7 +217,7 @@ export default function EmojiPicker({
           id="emoji-search"
           type="search"
           autoComplete="off"
-          placeholder="Search happy, pizza… or paste emoji"
+          placeholder="Search emoji"
           value={text}
           disabled={busy}
           onFocus={requestSearch}
@@ -233,15 +233,11 @@ export default function EmojiPicker({
       </form>
       <div className="picker-mode" role="group" aria-label="Emoji action">
         <button type="button" aria-pressed={target.kind === 'replace'} disabled={!selectedLayer || busy}
+          title={selectedLayer ? `Replace ${selectedLayer.name === 'Emoji' ? selectedName : selectedLayer.name}` : undefined}
           onClick={() => setModeChoice({ selectedId, mode: 'replace' })}>Replace selected</button>
         <button type="button" aria-pressed={target.kind === 'add'} disabled={busy}
           onClick={() => setModeChoice({ selectedId, mode: 'add' })}>Add emoji</button>
       </div>
-      <p className="picker-target">
-        {target.kind === 'replace'
-          ? `Replacing: ${selectedLayer?.name === 'Emoji' ? selectedName : selectedLayer?.name ?? selectedName}`
-          : 'Add a new emoji to your design.'}
-      </p>
       <div className="picker-results-heading">
         <span>{searching ? `${candidates.length} ${candidates.length === 1 ? 'match' : 'matches'}`
           : showAll ? 'All emoji' : recents.length ? 'Recent & popular' : 'Popular emoji'}</span>

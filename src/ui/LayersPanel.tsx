@@ -52,10 +52,7 @@ export default function LayersPanel({
   return (
     <div className="panel layers-panel">
       <div className="layers-heading">
-        <div>
-          <h2>Layers</h2>
-          <p>Top layers paint in front.</p>
-        </div>
+        <h2 title="Top layers paint in front">Layers</h2>
       </div>
       {selectedLayerIds.length > 1 && (
         <div className="arrange-actions" aria-label="Arrange selected layers">
@@ -83,7 +80,6 @@ export default function LayersPanel({
       </div>
       {design.groups.length > 0 && <section className="selection-groups" aria-label="Saved groups">
         <h3>Saved groups</h3>
-        <p>Select a group to move it together, or edit its members.</p>
         {design.groups.map((group) => <div className={`selection-group${editingGroupId === group.id ? ' editing' : ''}`}
           key={`${group.id}:${group.name}`}>
           <button type="button" aria-label={`Select group “${group.name}”`}

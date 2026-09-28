@@ -227,19 +227,13 @@ function SelectionControls({
   return (
     <div className="panel controls-panel">
       <div className="inspector-heading">
-        <div>
-          <span className="selection-label">{selected.length ? 'Editing' : 'Workspace'}</span>
-          <h2>{single?.name ?? (selected.length ? `${selected.length} objects` : 'Canvas')}</h2>
-          <p className="selection-summary">{single ? 'Adjust the selected object.'
-            : selected.length ? 'Move, resize, and rotate this selection together.'
-              : 'Select an object on the canvas to edit it.'}</p>
-        </div>
+        <h2>{single?.name ?? (selected.length ? `${selected.length} objects` : 'Canvas')}</h2>
         {selected.length > 0 && <button type="button" aria-label="Reset selected edits"
           title="Reset transforms and effects on the selected objects" onClick={() => onReset(ids)}>Reset selected</button>}
       </div>
 
       {!selected.length && <div className="inspector-empty">
-        <p>Add an emoji or text to start composing. Choose an object on the canvas or in Objects to see its controls here.</p>
+        <p>Select an object on the canvas to edit it.</p>
       </div>}
 
       {emoji && <fieldset className="preset-controls">
@@ -254,7 +248,6 @@ function SelectionControls({
             </button>;
           })}
         </div>
-        <p className="preset-description">Preview your emoji, then apply a style. Each click is one undo.</p>
       </fieldset>}
 
       {single?.kind === 'text' && <div className="inspector-object-fields">

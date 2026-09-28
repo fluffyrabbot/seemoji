@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ConflictResolutionPanel from '../ConflictResolutionPanel';
 import Controls from '../Controls';
 import EmojiPicker from '../EmojiPicker';
@@ -8,6 +8,7 @@ import ProjectBar from '../ProjectBar';
 import StarredProjectsBar from '../StarredProjectsBar';
 import WorkspaceMenu from '../WorkspaceMenu';
 import WorkspaceRecoveryPanel from '../WorkspaceRecoveryPanel';
+import Wordmark from '../Wordmark';
 import type {
   EditorPageCommands,
   EditorPageViewModel,
@@ -20,10 +21,27 @@ interface Props {
   readonly renderExportBar: ExportBarRenderer;
 }
 
+/** Mirrors the stylesheet's mobile breakpoint; wide layouts dock export in the header. */
+const WIDE_LAYOUT = '(min-width: 761px)';
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener('change', update);
+    return () => list.removeEventListener('change', update);
+  }, [query]);
+  return matches;
+}
+
 export default function EditorLayout({ model, commands, renderExportBar }: Props) {
   const conflictPanelRef = useRef<HTMLDivElement>(null);
   const licensesDialogRef = useRef<HTMLDialogElement>(null);
   const [panel, setPanel] = useState<'emoji' | 'layers' | 'adjust'>('emoji');
+  const [exportSlot, setExportSlot] = useState<HTMLDivElement | null>(null);
+  const wide = useMediaQuery(WIDE_LAYOUT);
 
   if (model.status === 'loading') {
     return <main className="editor-layout" aria-busy="true">
@@ -47,38 +65,41 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
   return (
     <>
       <header className="app-header">
-        <div>
-          <h1>Emoji Studio</h1>
-          <p>Pick a mood. Make it yours.</p>
-        </div>
-        <div className="history-actions" aria-label="Edit history">
-          <button disabled={model.workspaceBusy || !model.canUndo}
-            onClick={commands.history.undo} title="Undo (⌘Z)">↶ Undo</button>
-          <button disabled={model.workspaceBusy || !model.canRedo}
-            onClick={commands.history.redo} title="Redo (⇧⌘Z)">↷ Redo</button>
+        <Wordmark />
+        <ProjectBar name={model.projectName} projects={model.projects}
+          currentId={model.currentProjectId}
+          persistenceStatus={model.persistenceStatus}
+          busy={model.workspaceBusy}
+          onNameChange={commands.projects.changeName}
+          onNew={() => void commands.projects.create()}
+          onOpen={(id) => void commands.projects.open(id)}
+          menu={<WorkspaceMenu
+            starred={currentProject?.starredAt != null}
+            storageHealth={model.storageHealth}
+            busy={model.recoveryBusy || model.workspaceBusy}
+            onSaveNow={() => void commands.projects.save()}
+            onToggleStar={() => void commands.projects.toggleStar()}
+            onDelete={() => void commands.projects.delete()}
+            onExportProject={commands.projects.export}
+            onImportProject={(file) => void commands.projects.import(file)}
+            onExportWorkspace={() => void commands.recovery.exportWorkspace()}
+            onImportWorkspace={(file) => void commands.recovery.importWorkspace(file)}
+            onRequestPersistence={() => void commands.recovery.requestPersistentStorage()}
+          />} />
+        <div className="header-actions">
+          <div className="history-actions" aria-label="Edit history">
+            <button className="icon-button" disabled={model.workspaceBusy || !model.canUndo}
+              onClick={commands.history.undo} aria-label="Undo" title="Undo (⌘Z)">
+              <span aria-hidden="true">↶</span>
+            </button>
+            <button className="icon-button" disabled={model.workspaceBusy || !model.canRedo}
+              onClick={commands.history.redo} aria-label="Redo" title="Redo (⇧⌘Z)">
+              <span aria-hidden="true">↷</span>
+            </button>
+          </div>
+          <div ref={setExportSlot} className="header-export" inert={model.workspaceBusy} />
         </div>
       </header>
-
-      <ProjectBar name={model.projectName} projects={model.projects}
-        currentId={model.currentProjectId}
-        persistenceStatus={model.persistenceStatus}
-        busy={model.workspaceBusy}
-        onNameChange={commands.projects.changeName}
-        onNew={() => void commands.projects.create()}
-        onOpen={(id) => void commands.projects.open(id)}
-        menu={<WorkspaceMenu
-          starred={currentProject?.starredAt != null}
-          storageHealth={model.storageHealth}
-          busy={model.recoveryBusy || model.workspaceBusy}
-          onSaveNow={() => void commands.projects.save()}
-          onToggleStar={() => void commands.projects.toggleStar()}
-          onDelete={() => void commands.projects.delete()}
-          onExportProject={commands.projects.export}
-          onImportProject={(file) => void commands.projects.import(file)}
-          onExportWorkspace={() => void commands.recovery.exportWorkspace()}
-          onImportWorkspace={(file) => void commands.recovery.importWorkspace(file)}
-          onRequestPersistence={() => void commands.recovery.requestPersistentStorage()}
-        />} />
 
       {model.hasConflicts && (
         <section className="workspace-status-banner conflict" role="alert">
@@ -216,6 +237,7 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
             onSizeChange={commands.canvas.changeSize}
             onNotice={commands.notices.show}
             renderExportBar={renderExportBar}
+            exportSlot={wide ? exportSlot : null}
           />
           {model.hasConflicts && (
             <div ref={conflictPanelRef} tabIndex={-1} className="conflict-resolution-anchor">

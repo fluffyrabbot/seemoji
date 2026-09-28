@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { ChevronDown, Plus } from 'lucide-react';
 import type { Project } from '../domain/project';
 
 interface Props {
@@ -38,14 +39,18 @@ export default function ProjectBar({ name, projects, currentId, persistenceStatu
       <button type="button" className="project-toggle" aria-expanded={projectsOpen}
         aria-controls="project-actions" onClick={() => setProjectsOpen(!projectsOpen)}>Projects</button>
       <div className="project-actions" id="project-actions" data-open={projectsOpen}>
-        <button type="button" disabled={busy} onClick={() => { onNew(); setProjectsOpen(false); }}>New</button>
-        <select aria-label="Open project" value={currentId} disabled={busy}
-          onChange={(event) => {
-            if (event.target.value) { onOpen(event.target.value); setProjectsOpen(false); }
-          }}>
-          <option value="" disabled>Open…</option>
-          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select>
+        <span className="project-switcher" title="Switch project">
+          <select aria-label="Open project" value={currentId} disabled={busy}
+            onChange={(event) => {
+              if (event.target.value) { onOpen(event.target.value); setProjectsOpen(false); }
+            }}>
+            <option value="" disabled>Open…</option>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select>
+          <ChevronDown size={16} aria-hidden="true" />
+        </span>
+        <button type="button" className="icon-button" aria-label="New" title="New project" disabled={busy}
+          onClick={() => { onNew(); setProjectsOpen(false); }}><Plus size={17} aria-hidden="true" /></button>
         {menu}
       </div>
     </section>

@@ -2,6 +2,8 @@ import { bubbleSpeakerAt, detachBubble } from '../domain/bubbleAttachment';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
+import { Eye } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { createPlacedLayer, isPlacementTool, type PlacementTool } from './placement';
 import {
   useEffect,
@@ -90,6 +92,8 @@ interface Props {
   readonly onSizeChange: (size: ExportSize) => void;
   readonly onNotice: (notice: Notice) => void;
   readonly renderExportBar: ExportBarRenderer;
+  /** Wide layouts dock the export bar in the app header; null renders it under the canvas. */
+  readonly exportSlot: HTMLElement | null;
 }
 
 type Point = CanvasPoint;
@@ -181,6 +185,7 @@ export default function Preview({
   onSizeChange,
   onNotice,
   renderExportBar,
+  exportSlot,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -809,10 +814,7 @@ export default function Preview({
   return (
     <div className="panel preview-panel">
       <div className="panel-heading">
-        <div>
-          <h2>Canvas</h2>
-          <p>{isPlacementTool(tool) ? tool === 'text' ? 'Click or drag to place text' : tool === 'line' ? 'Drag to draw · Alt: from center' : 'Drag to draw · Shift: equal sides · Alt: from center' : 'Drag to move · corner to resize · round handle to rotate'}</p>
-        </div>
+        <h2 className="sr-only">Canvas</h2>
         <div className="viewport-actions">
           <button type="button" aria-label="Zoom out"
             onClick={() => setZoom(viewport.zoom / 1.25)}>−</button>
@@ -837,7 +839,7 @@ export default function Preview({
             type="button"
             className="compare-button"
             disabled={selectedLayers.length === 0}
-            title="Compare the selected objects with their original transform and color"
+            title="Hold to compare with the original"
             onPointerDown={() => setShowOriginal(true)}
             onPointerUp={() => setShowOriginal(false)}
             onPointerCancel={() => setShowOriginal(false)}
@@ -850,8 +852,9 @@ export default function Preview({
             }}
             onKeyUp={() => setShowOriginal(false)}
             onBlur={() => setShowOriginal(false)}
+            aria-label="Hold to compare"
           >
-            Hold to compare
+            <Eye size={17} aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -935,6 +938,11 @@ export default function Preview({
         )}
       </div>
 
+      {isPlacementTool(tool) && <p className="canvas-hint">
+        {tool === 'text' ? 'Click or drag to place text'
+          : tool === 'line' ? 'Drag to draw · Alt: from center'
+            : 'Drag to draw · Shift: equal sides · Alt: from center'}
+      </p>}
       <div className="preview-stage" aria-busy={rendering || paintedPreviewKey !== previewKey}>
         <div
           ref={stageRef}
@@ -1138,7 +1146,7 @@ export default function Preview({
         {rendering && <span className="render-status">Rendering…</span>}
       </div>
 
-      {renderExportBar({
+      {((bar) => exportSlot ? createPortal(bar, exportSlot) : bar)(renderExportBar({
         size,
         prepared: png !== null,
         copying,
@@ -1147,7 +1155,7 @@ export default function Preview({
         onDownload: () => {
           if (png) assetDelivery.downloadPng(png, 'seemoji.png');
         },
-      })}
+      }))}
       <details className="output-context-preview">
         <summary>Chat preview</summary>
         <div className="chat-previews">
