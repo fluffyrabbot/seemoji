@@ -4,25 +4,12 @@ import { createEmojiRenderPlan, createLayerMatrix } from '../domain/renderPlan';
 import type { EmojiAssetSource } from '../ports/emojiAssetSource';
 import type { RenderedFrame, RendererPort } from '../ports/renderer';
 
-const MAX_FRAME_CACHE = 24;
-const MAX_PNG_CACHE = 12;
-
-const cacheKey = (design: DesignDocument, size: number): string =>
-  `${size}:${JSON.stringify(design)}`;
-
-const setLru = <T>(map: Map<string, T>, key: string, value: T, maximum: number) => {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > maximum) {
-    const oldest = map.keys().next().value;
-    if (oldest === undefined) break;
-    map.delete(oldest);
-  }
-};
+import { WeightedCache } from './weightedCache';
+import { renderKey, layerRenderKey } from './renderIdentity';
 
 export class RenderCoordinator {
-  readonly #frames = new Map<string, Promise<RenderedFrame>>();
-  readonly #pngs = new Map<string, Promise<Blob>>();
+  readonly #frames = new WeightedCache<string, Promise<RenderedFrame>>(16 * 1024 * 1024);
+  readonly #pngs = new WeightedCache<string, Promise<Blob>>(8 * 1024 * 1024);
   readonly #assets: EmojiAssetSource;
   readonly #renderer: RendererPort;
 
@@ -36,14 +23,13 @@ export class RenderCoordinator {
   }
 
   render(design: DesignDocument, size: number): Promise<RenderedFrame> {
-    const key = cacheKey(design, size);
+    const key = renderKey(design, size);
     const existing = this.#frames.get(key);
     if (existing) {
-      setLru(this.#frames, key, existing, MAX_FRAME_CACHE);
       return existing;
     }
     const pending = Promise.all(
-      design.layers.map(async (layer) => {
+      design.layers.filter((layer) => layer.visible && layer.opacity > 0).map(async (layer) => {
         if (layer.kind === 'emoji') {
           return {
             kind: 'emoji' as const,
@@ -51,7 +37,7 @@ export class RenderCoordinator {
             plan: createEmojiRenderPlan(layer, size),
             opacity: layer.opacity,
             mask: layer.mask,
-            cacheKey: `${size}:${JSON.stringify(layer)}`,
+            cacheKey: layerRenderKey(layer, size),
           };
         }
         const common = {
@@ -59,7 +45,7 @@ export class RenderCoordinator {
           opacity: layer.opacity,
           matrix: createLayerMatrix(layer.transform, size),
           mask: layer.mask,
-          cacheKey: `${size}:${JSON.stringify({ ...layer, transform: undefined, opacity: undefined, visible: undefined })}`,
+          cacheKey: layerRenderKey(layer, size),
         };
         if (layer.kind === 'strokes') return { kind: 'strokes' as const, ...common, strokes: layer.strokes };
         if (layer.kind === 'shape') return { kind: 'shape' as const, ...common, shape: layer.shape,
@@ -72,27 +58,26 @@ export class RenderCoordinator {
     )
       .then((layers) => this.#renderer.render({ size, layers, layout: design.canvas.layout }))
       .catch((cause: unknown) => {
-        this.#frames.delete(key);
+        if (this.#frames.get(key) === pending) this.#frames.delete(key);
         throw cause;
       });
-    setLru(this.#frames, key, pending, MAX_FRAME_CACHE);
+    this.#frames.set(key, pending, size * size * 4);
     return pending;
   }
 
   png(design: DesignDocument, size: number): Promise<Blob> {
-    const key = cacheKey(design, size);
+    const key = renderKey(design, size);
     const existing = this.#pngs.get(key);
     if (existing) {
-      setLru(this.#pngs, key, existing, MAX_PNG_CACHE);
       return existing;
     }
     const pending = this.render(design, size)
       .then((frame) => this.#renderer.toPng(frame))
       .catch((cause: unknown) => {
-        this.#pngs.delete(key);
+        if (this.#pngs.get(key) === pending) this.#pngs.delete(key);
         throw cause;
       });
-    setLru(this.#pngs, key, pending, MAX_PNG_CACHE);
+    this.#pngs.set(key, pending, size * size * 4);
     return pending;
   }
 }

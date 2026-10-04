@@ -5,9 +5,9 @@ import { artworkMissingMessage, remapSource } from './remapSource';
 
 const catalog = (covered: boolean): EmojiPackCatalog => ({
   list: async () => ({ ok: true, value: [] }),
-  get: async () => ({ ok: false, error: 'unused' }),
-  hasGlyph: async () => covered,
-  assetUrl: async () => ({ ok: false, error: 'unused' }),
+  get: async () => ({ ok: false, kind: 'invalid', error: 'unused' }),
+  hasGlyph: async () => ({ ok: true, value: covered }),
+  assetUrl: async () => ({ ok: false, kind: 'invalid', error: 'unused' }),
   summaryFor: () => ({
     id: 'twemoji',
     name: 'Twemoji',
@@ -35,7 +35,7 @@ describe('remapSource', () => {
       { pack: 'twemoji', packVersion: '15.1.0' },
       catalog(false),
     )).resolves.toEqual({
-      ok: false,
+      ok: false, kind: 'missing',
       error: artworkMissingMessage('Twemoji', '15.1.0', 'A'),
     });
   });

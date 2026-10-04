@@ -25,11 +25,11 @@ const preference = (): PackPreferenceStore => ({
   write: vi.fn(async () => undefined),
 });
 
-const catalog = (hasGlyph: EmojiPackCatalog['hasGlyph']): EmojiPackCatalog => ({
+const catalog = (hasGlyph: (snapshot: PackSnapshot, codepoint: string) => Promise<boolean>): EmojiPackCatalog => ({
   list: async () => ({ ok: true, value: [SUMMARY] }),
-  get: async () => ({ ok: false, error: 'unused' }),
-  hasGlyph,
-  assetUrl: async () => ({ ok: false, error: 'unused' }),
+  get: async () => ({ ok: false, kind: 'invalid', error: 'unused' }),
+  hasGlyph: async (snapshot, codepoint) => ({ ok: true, value: await hasGlyph(snapshot, codepoint) }),
+  assetUrl: async () => ({ ok: false, kind: 'invalid', error: 'unused' }),
   summaryFor: () => SUMMARY,
 });
 
@@ -386,4 +386,19 @@ describe('pack session', () => {
     await expect(first).resolves.toEqual({ kind: 'stale' });
     expect(workspace.dispatches).toHaveLength(1);
   });
+});
+
+it('retries catalog initialization and does not label unavailable coverage as missing artwork', async () => {
+  const workspace = new WorkspaceStub();
+  const source = catalog(async () => true);
+  const list = vi.fn().mockResolvedValueOnce({ ok: false, kind: 'unavailable', error: 'Catalog offline' })
+    .mockResolvedValue({ ok: true, value: [SUMMARY] });
+  const session = new PackSession({ catalog: { ...source, list,
+    hasGlyph: async () => ({ ok: false, kind: 'unavailable', error: 'Manifest offline' }) },
+    preference: preference(), workspace, validateSource: vi.fn() });
+  await expect(session.load()).resolves.toMatchObject({ status: 'error', error: 'Catalog offline' });
+  await expect(session.load()).resolves.toMatchObject({ status: 'ready' });
+  await expect(session.pick('😀', { kind: 'add', layerId: 'new' })).resolves.toEqual({ kind: 'rejected', error: 'Manifest offline' });
+  expect(workspace.dispatches).toEqual([]);
+  expect(list).toHaveBeenCalledTimes(2);
 });

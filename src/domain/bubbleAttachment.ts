@@ -36,13 +36,3 @@ export function bubbleSpeakerAt(design: DesignDocument, point: { x: number; y: n
       && local.y >= box.y && local.y <= box.y + box.height;
   });
 }
-
-/** Retain the rendered endpoint when migrating attachments from before explicit anchors. */
-export function preserveLegacyAnchors(design: DesignDocument): DesignDocument {
-  return { ...design, layers: design.layers.map((layer) => {
-    if (layer.kind !== 'text' || !layer.bubble?.speakerId || layer.bubble.speakerAnchor) return layer;
-    const speaker = design.layers.find((candidate) => candidate.id === layer.bubble!.speakerId);
-    const anchor = speaker && worldPointToLayerLocal(speaker, layerLocalPointToWorld(layer, layer.bubble.tail));
-    return anchor ? { ...layer, bubble: { ...layer.bubble, speakerAnchor: anchor } } : layer;
-  }) };
-}

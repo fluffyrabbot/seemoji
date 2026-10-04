@@ -1,16 +1,20 @@
+import { LatestTask } from '../application/latestTask';
+import { renderKey as keyForRender } from '../application/renderIdentity';
 import { bubbleSpeakerAt, detachBubble } from '../domain/bubbleAttachment';
 import { comicPanels } from '../domain/canvasLayout';
 import CanvasTextEditor from './CanvasTextEditor';
 import CanvasTools from './CanvasTools';
 import { Eye } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { createPlacedLayer, isPlacementTool, type PlacementTool } from './placement';
+import { createPlacedLayer, isPlacementTool } from '../domain/placement';
+import { CanvasInteractionStore, type Gesture, type DraftStroke } from '../application/canvasInteraction';
 import {
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
@@ -43,7 +47,6 @@ import {
   layerWorldCorners,
   unionWorldBounds,
   worldPointToLayerLocal,
-  type WorldBounds,
 } from '../domain/sceneGeometry';
 import {
   applyPressureCurve,
@@ -98,51 +101,6 @@ interface Props {
 
 type Point = CanvasPoint;
 
-type Gesture =
-  | {
-      readonly kind: 'move';
-      readonly pointerId: number;
-      readonly start: Point;
-      readonly layers: readonly SceneLayer[];
-      readonly bounds: WorldBounds;
-    }
-  | {
-      readonly kind: 'scale';
-      readonly pointerId: number;
-      readonly center: Point;
-      readonly startLocal: Point | null;
-      readonly uniform: boolean;
-      readonly startDistance: number;
-      readonly layers: readonly SceneLayer[];
-    }
-  | {
-      readonly kind: 'rotate';
-      readonly pointerId: number;
-      readonly center: Point;
-      readonly lastAngle: number;
-      readonly angleDelta: number;
-      readonly layers: readonly SceneLayer[];
-    };
-
-interface Marquee {
-  readonly pointerId: number;
-  readonly start: Point;
-  readonly current: Point;
-  readonly additive: boolean;
-}
-
-interface DraftStroke {
-  readonly kind: 'brush' | 'eraser' | 'restore';
-  readonly pointerId: number;
-  readonly targetLayerId: string;
-  readonly createLayer: boolean;
-  readonly layerLocal: boolean;
-  readonly points: readonly StrokePoint[];
-  readonly width: number;
-  readonly color: string;
-  readonly opacity: number;
-}
-
 interface HoverSample {
   readonly point: Point;
   readonly layerId: string | null;
@@ -189,40 +147,26 @@ export default function Preview({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const renderSequence = useRef(0);
-  const gesture = useRef<Gesture | null>(null);
-  const draftRef = useRef<DraftStroke | null>(null);
-  const marqueeRef = useRef<Marquee | null>(null);
-  const placementRef = useRef<{ tool: PlacementTool; pointerId: number; start: Point; current: Point; shiftKey: boolean; altKey: boolean; id: string; color: string } | null>(null);
-  const tailRef = useRef<{ pointerId: number; layer: TextLayer; moved: boolean } | null>(null);
-  const [tailDraft, setTailDraft] = useState<TextLayer | null>(null);
+  const [interaction] = useState(() => new CanvasInteractionStore());
+  const activeInteraction = useSyncExternalStore(interaction.subscribe, interaction.getSnapshot, interaction.getSnapshot);
+  const draft = activeInteraction.kind === 'stroke' ? activeInteraction.value : null;
+  const marquee = activeInteraction.kind === 'marquee' ? activeInteraction.value : null;
+  const placement = activeInteraction.kind === 'placement' ? activeInteraction.value : null;
+  const tailDraft = activeInteraction.kind === 'tail' ? activeInteraction.value.layer : null;
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const editingText = design.layers.find((layer) => layer.id === editingTextId && layer.visible);
-  const [placement, setPlacement] = useState<typeof placementRef.current>(null);
-  useLayoutEffect(() => {
-    placementRef.current = null;
-    setPlacement(null);
-    tailRef.current = null; setTailDraft(null);
-  }, [tool, editingGroupId]);
   const gestureScope = useRef(editingGroupId);
-  const [draft, setDraft] = useState<DraftStroke | null>(null);
-  const [marquee, setMarquee] = useState<Marquee | null>(null);
+  const previousTool = useRef(tool);
   const [snapGuides, setSnapGuides] = useState<{ readonly x?: number; readonly y?: number }>({});
   const [hoverSample, setHoverSample] = useState<HoverSample | null>(null);
   useLayoutEffect(() => {
-    if (gestureScope.current === editingGroupId) return;
+    if (gestureScope.current === editingGroupId && previousTool.current === tool) return;
     gestureScope.current = editingGroupId;
-    const wasTransforming = gesture.current !== null;
-    gesture.current = null;
-    draftRef.current = null;
-    placementRef.current = null;
-    setPlacement(null);
-    marqueeRef.current = null;
-    setDraft(null);
-    setMarquee(null);
+    previousTool.current = tool;
+    const previous = interaction.cancel();
     setSnapGuides({});
-    if (wasTransforming) onTransformCommit();
-  }, [editingGroupId, onTransformCommit]);
+    if (previous.kind === 'transform') onTransformCommit();
+  }, [editingGroupId, tool, interaction, onTransformCommit]);
   const [showOriginal, setShowOriginal] = useState(false);
   const lightPreviewRef = useRef<HTMLCanvasElement>(null);
   const darkPreviewRef = useRef<HTMLCanvasElement>(null);
@@ -254,13 +198,16 @@ export default function Preview({
     } : design,
     [design, showOriginal, selectedLayerIds, editingTextId, tailDraft],
   );
-  const renderKey = `${size}:${JSON.stringify(design)}`;
-  const previewKey = `${previewRenderSize}:${JSON.stringify(previewDesign)}`;
+  const renderKey = keyForRender(design, size);
+  const previewKey = keyForRender(previewDesign, previewRenderSize);
   const [paintedPreviewKey, setPaintedPreviewKey] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<{ readonly key: string; readonly blob: Blob } | null>(
     null,
   );
   const [copying, setCopying] = useState(false);
+  const [renderAttempt, setRenderAttempt] = useState(0);
+  const [previewError, setPreviewError] = useState(false);
+  const [exportError, setExportError] = useState(false);
   const png = prepared?.key === renderKey ? prepared.blob : null;
   const rendering = png === null;
   const layer = getEmojiLayer(design);
@@ -304,40 +251,41 @@ export default function Preview({
     y: top.y + ((top.y - center.y) / topDistance) * previewRenderSize * 0.09 / viewport.zoom,
   };
 
+  const previewTask = useMemo(() => new LatestTask(
+    ({ design, size }: { design: DesignDocument; size: number }) => renderer.render(design, size),
+  ), [renderer]);
+  const exportTask = useMemo(() => new LatestTask(
+    ({ design, size }: { design: DesignDocument; size: number }) => renderer.png(design, size),
+  ), [renderer]);
+
   useEffect(() => {
-    const sequence = ++renderSequence.current;
-    renderer
-      .render(previewDesign, previewRenderSize)
-      .then((frame) => {
-        if (sequence !== renderSequence.current || !canvasRef.current) return;
-        const canvasContext = canvasRef.current.getContext('2d');
-        if (!canvasContext) throw new Error('Canvas 2D rendering is unavailable');
-        canvasContext.clearRect(0, 0, previewRenderSize, previewRenderSize);
-        canvasContext.drawImage(frame.canvas, 0, 0);
-        for (const preview of [lightPreviewRef.current, darkPreviewRef.current]) {
-          const context = preview?.getContext('2d');
-          if (context) {
-            context.clearRect(0, 0, 32, 32);
-            context.drawImage(frame.canvas, 0, 0, 32, 32);
-          }
+    previewTask.request({ design: previewDesign, size: previewRenderSize }, (frame) => {
+      const context = canvasRef.current?.getContext('2d');
+      if (!context) return;
+      context.clearRect(0, 0, previewRenderSize, previewRenderSize);
+      context.drawImage(frame.canvas, 0, 0);
+      for (const preview of [lightPreviewRef.current, darkPreviewRef.current]) {
+        const context = preview?.getContext('2d');
+        if (context) {
+          context.clearRect(0, 0, 32, 32);
+          context.drawImage(frame.canvas, 0, 0, 32, 32);
         }
-        setPaintedPreviewKey(previewKey);
-        if (frame.warnings.length > 0) {
-          onNotice({ kind: 'error', message: frame.warnings.join(' ') });
-        }
-        return renderer.png(design, size);
-      })
-      .then((blob) => {
-        if (sequence === renderSequence.current && blob) {
-          setPrepared({ key: renderKey, blob });
-        }
-      })
-      .catch((cause: unknown) => {
-        if (sequence === renderSequence.current) {
-          onNotice({ kind: 'error', message: `Render failed: ${String(cause)}` });
-        }
-      });
-  }, [design, previewDesign, previewRenderSize, size, renderer, onNotice, renderKey, previewKey]);
+      }
+      setPreviewError(false);
+      setPaintedPreviewKey(previewKey);
+      if (frame.warnings.length) onNotice({ kind: 'error', message: frame.warnings.join(' ') });
+    }, (cause) => {
+      setPreviewError(true);
+      onNotice({ kind: 'error', message: `Render failed: ${String(cause)}` });
+    });
+    return () => previewTask.cancel();
+  }, [previewDesign, previewRenderSize, previewKey, previewTask, onNotice, renderAttempt]);
+
+  useEffect(() => {
+    exportTask.request({ design, size }, (blob) => { setExportError(false); setPrepared({ key: renderKey, blob }); },
+      (cause) => { setExportError(true); onNotice({ kind: 'error', message: `PNG preparation failed: ${String(cause)}` }); });
+    return () => exportTask.cancel();
+  }, [design, size, renderKey, exportTask, onNotice, renderAttempt]);
 
   const strokePointInStage = (
     event: PointerEvent,
@@ -361,14 +309,7 @@ export default function Preview({
 
   const startTouchNavigation = (event: PointerEvent): boolean => {
     if (!beginTouch(event)) return false;
-    tailRef.current = null; setTailDraft(null);
-    draftRef.current = null;
-    placementRef.current = null;
-    setPlacement(null);
-    marqueeRef.current = null;
-    gesture.current = null;
-    setDraft(null);
-    setMarquee(null);
+    interaction.cancel();
     setSnapGuides({});
     onTransformCommit();
     return true;
@@ -435,11 +376,11 @@ export default function Preview({
           stageRef.current.focus({ preventScroll: true });
           stageRef.current.setPointerCapture(event.pointerId);
           const moving = design.layers.filter((candidate) => selected.includes(candidate.id));
-          gesture.current = {
+          interaction.begin('transform', {
             kind: 'move', pointerId: event.pointerId, start: point,
             layers: moving,
             bounds: unionWorldBounds(moving)!,
-          };
+          });
         }
         return;
       }
@@ -448,8 +389,7 @@ export default function Preview({
       stageRef.current.focus({ preventScroll: true });
       if (!event.shiftKey) onSelectionChange([]);
       const next = { pointerId: event.pointerId, start: point, current: point, additive: event.shiftKey };
-      marqueeRef.current = next;
-      setMarquee(next);
+      interaction.begin('marquee', next);
       return;
     }
     if (isPlacementTool(tool)) {
@@ -460,8 +400,7 @@ export default function Preview({
       stageRef.current.setPointerCapture(event.pointerId);
       const next = { tool, pointerId: event.pointerId, start: point, current: point,
         id: crypto.randomUUID(), color: brush.color, shiftKey: event.shiftKey, altKey: event.altKey };
-      placementRef.current = next;
-      setPlacement(next);
+      interaction.begin('placement', next);
       return;
     }
     if (tool === 'fill') return;
@@ -491,8 +430,7 @@ export default function Preview({
       color: brush.color,
       opacity: brush.opacity,
     };
-    draftRef.current = next;
-    setDraft(next);
+    interaction.begin('stroke', next);
   };
 
   const beginGesture = (kind: Gesture['kind'], event: PointerEvent) => {
@@ -511,19 +449,19 @@ export default function Preview({
     event.stopPropagation();
     stageRef.current.setPointerCapture(event.pointerId);
     if (kind === 'move') {
-      gesture.current = {
+      interaction.begin('transform', {
         kind,
         pointerId: event.pointerId,
         start: point,
         layers: selectedLayers,
         bounds: selectionBounds,
-      };
+      });
       return;
     }
     const pivot = selectionPivot(selectedLayers);
     const gestureCenter = { x: pivot.x + 0.5, y: pivot.y + 0.5 };
     if (kind === 'scale') {
-      gesture.current = {
+      interaction.begin('transform', {
         kind,
         pointerId: event.pointerId,
         center: gestureCenter,
@@ -531,21 +469,21 @@ export default function Preview({
         uniform: proportionsLocked || selectedLayers.length > 1,
         startDistance: Math.hypot(point.x - gestureCenter.x, point.y - gestureCenter.y),
         layers: selectedLayers,
-      };
+      });
       return;
     }
-    gesture.current = {
+    interaction.begin('transform', {
       kind,
       pointerId: event.pointerId,
       center: gestureCenter,
       lastAngle: Math.atan2(point.y - gestureCenter.y, point.x - gestureCenter.x),
       angleDelta: 0,
       layers: selectedLayers,
-    };
+    });
   };
 
   const continueGesture = (event: PointerEvent) => {
-    const tail = tailRef.current;
+    const tail = interaction.read('tail');
     if (tail?.pointerId === event.pointerId) {
       const world = pointInCanvas(event);
       const local = world && worldPointToLayerLocal(tail.layer, world);
@@ -554,7 +492,7 @@ export default function Preview({
         const next: TextLayer = { ...tail.layer, bubble: { ...detachBubble(tail.layer).bubble!,
           ...(speaker ? { speakerId: speaker.id, speakerAnchor: worldPointToLayerLocal(speaker, world!)! } : {}),
           tail: speaker ? local : { x: Math.max(0, Math.min(1, local.x)), y: Math.max(0, Math.min(1, local.y)) } } };
-        tailRef.current = { ...tail, layer: next, moved: true }; setTailDraft(next);
+        interaction.update('tail', { ...tail, layer: next, moved: true });
       }
       return;
     }
@@ -567,20 +505,18 @@ export default function Preview({
       setHoverSample(localPoint ? { point: localPoint, layerId: drawingLayer?.id ?? null } : null);
     }
     if (continuePan(event)) return;
-    if (placementRef.current?.pointerId === event.pointerId && worldPoint) {
-      const next = { ...placementRef.current, current: worldPoint, shiftKey: event.shiftKey, altKey: event.altKey };
-      placementRef.current = next;
-      setPlacement(next);
+    if (interaction.read('placement')?.pointerId === event.pointerId && worldPoint) {
+      const next = { ...interaction.read('placement')!, current: worldPoint, shiftKey: event.shiftKey, altKey: event.altKey };
+      interaction.update('placement', next);
       return;
     }
-    const activeMarquee = marqueeRef.current;
+    const activeMarquee = interaction.read('marquee');
     if (activeMarquee?.pointerId === event.pointerId && worldPoint) {
       const next = { ...activeMarquee, current: worldPoint };
-      marqueeRef.current = next;
-      setMarquee(next);
+      interaction.update('marquee', next);
       return;
     }
-    const activeDraft = draftRef.current;
+    const activeDraft = interaction.read('stroke');
     if (activeDraft?.pointerId === event.pointerId) {
       const coordinateLayer = activeDraft.layerLocal
         ? design.layers.find((candidate) => candidate.id === activeDraft.targetLayerId) ?? null
@@ -594,11 +530,10 @@ export default function Preview({
         return;
       }
       const next = { ...activeDraft, points: [...activeDraft.points, point] };
-      draftRef.current = next;
-      setDraft(next);
+      interaction.update('stroke', next);
       return;
     }
-    const active = gesture.current;
+    const active = interaction.read('transform');
     const point = pointInCanvas(event);
     if (!active || active.pointerId !== event.pointerId || !point) return;
     if (active.kind === 'move') {
@@ -639,7 +574,7 @@ export default function Preview({
       // short continuous motion and complete turns retain their path constraints.
       const step = wrapRotation((angle - active.lastAngle) * 180 / Math.PI);
       const angleDelta = active.angleDelta + step;
-      gesture.current = { ...active, lastAngle: angle, angleDelta };
+      interaction.update('transform', { ...active, lastAngle: angle, angleDelta });
       onTransformsChange(rotateSelection(active.layers, angleDelta), 'canvas:rotate');
       return;
     }
@@ -662,20 +597,19 @@ export default function Preview({
   };
 
   const endGesture = (event: PointerEvent) => {
-    if (tailRef.current?.pointerId === event.pointerId) {
+    if (interaction.read('tail')?.pointerId === event.pointerId) {
       continueGesture(event);
-      const { layer, moved } = tailRef.current;
-      tailRef.current = null; setTailDraft(null);
+      const { layer, moved } = interaction.read('tail')!;
+      interaction.cancel();
       if (moved) onEditText(layer);
       return;
     }
     if (endTouch(event)) return;
     if (endPan(event)) return;
-    const placed = placementRef.current;
+    const placed = interaction.read('placement');
     if (placed?.pointerId === event.pointerId) {
       const end = pointInCanvas(event) ?? placed.current;
-      placementRef.current = null;
-      setPlacement(null);
+      interaction.finish();
       if (placed.tool === 'text' || Math.hypot(end.x - placed.start.x, end.y - placed.start.y)
           * previewRenderSize * viewport.zoom >= 3) {
         const layer = createPlacedLayer(placed.tool, placed.start, end, placed.id, placed.color, event);
@@ -684,7 +618,7 @@ export default function Preview({
       }
       return;
     }
-    const activeMarquee = marqueeRef.current;
+    const activeMarquee = interaction.read('marquee');
     if (activeMarquee?.pointerId === event.pointerId) {
       const left = Math.min(activeMarquee.start.x, activeMarquee.current.x);
       const right = Math.max(activeMarquee.start.x, activeMarquee.current.x);
@@ -694,11 +628,10 @@ export default function Preview({
         && (!editingGroup || editingGroup.layerIds.includes(candidate.id))
         && boundsIntersect({ left, top, right, bottom }, layerWorldBounds(candidate))).map((candidate) => candidate.id);
       onSelectionChange(activeMarquee.additive ? [...new Set([...selectedLayerIds, ...found])] : found);
-      marqueeRef.current = null;
-      setMarquee(null);
+      interaction.finish();
       return;
     }
-    const activeDraft = draftRef.current;
+    const activeDraft = interaction.read('stroke');
     if (activeDraft?.pointerId === event.pointerId) {
       const coordinateLayer = activeDraft.layerLocal
         ? design.layers.find((candidate) => candidate.id === activeDraft.targetLayerId) ?? null
@@ -732,38 +665,22 @@ export default function Preview({
           width: activeDraft.width,
         });
       }
-      draftRef.current = null;
-      setDraft(null);
+      interaction.finish();
       return;
     }
-    if (gesture.current?.pointerId !== event.pointerId) return;
-    gesture.current = null;
+    if (interaction.read('transform')?.pointerId !== event.pointerId) return;
+    interaction.finish();
     setSnapGuides({});
     onTransformCommit();
   };
 
   const cancelGesture = (event: PointerEvent) => {
-    if (tailRef.current?.pointerId === event.pointerId) {
-      tailRef.current = null; setTailDraft(null); return;
-    }
-    if (endTouch(event)) return;
-    if (endPan(event)) return;
-    if (placementRef.current?.pointerId === event.pointerId) {
-      placementRef.current = null;
-      setPlacement(null);
-      return;
-    }
-    if (draftRef.current?.pointerId === event.pointerId) {
-      draftRef.current = null;
-      setDraft(null);
-      return;
-    }
-    if (marqueeRef.current?.pointerId === event.pointerId) {
-      marqueeRef.current = null;
-      setMarquee(null);
-      return;
-    }
-    endGesture(event);
+    if (endTouch(event) || endPan(event)) return;
+    const previous = interaction.cancel(event.pointerId);
+    setSnapGuides({});
+    // Transforms are live document edits; interruption closes their undo group.
+    // Draft strokes, placements and tails have not touched the document.
+    if (previous.kind === 'transform') onTransformCommit();
   };
 
   const nudge = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -813,6 +730,9 @@ export default function Preview({
 
   return (
     <div className="panel preview-panel">
+      {(previewError || exportError) && <p role="alert">
+        Artwork could not be rendered. <button type="button" onClick={() => setRenderAttempt((attempt) => attempt + 1)}>Retry render</button>
+      </p>}
       <div className="panel-heading">
         <h2 className="sr-only">Canvas</h2>
         <div className="viewport-actions">
@@ -971,25 +891,23 @@ export default function Preview({
             }
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Escape' && tailRef.current) { tailRef.current = null; setTailDraft(null); event.stopPropagation(); return; }
+            if (event.key === 'Escape' && interaction.read('tail')) { interaction.cancel(); event.stopPropagation(); return; }
             const selected = design.layers.find((layer) => layer.id === selectedLayerIds[0]);
             if (event.key === 'Enter' && tool === 'select' && selectedLayerIds.length === 1 && selected?.kind === 'text') {
               event.preventDefault();
               setEditingTextId(selected.id);
             } else {
-              if (placementRef.current) {
-                const next = { ...placementRef.current, shiftKey: event.shiftKey, altKey: event.altKey };
-                placementRef.current = next;
-                setPlacement(next);
+              if (interaction.read('placement')) {
+                const next = { ...interaction.read('placement')!, shiftKey: event.shiftKey, altKey: event.altKey };
+                interaction.update('placement', next);
               }
               nudge(event);
             }
           }}
           onKeyUp={(event) => {
-            if (placementRef.current) {
-              const next = { ...placementRef.current, shiftKey: event.shiftKey, altKey: event.altKey };
-              placementRef.current = next;
-              setPlacement(next);
+            if (interaction.read('placement')) {
+              const next = { ...interaction.read('placement')!, shiftKey: event.shiftKey, altKey: event.altKey };
+              interaction.update('placement', next);
             }
             onTransformCommit();
           }}
@@ -1093,7 +1011,7 @@ export default function Preview({
                     event.preventDefault(); event.stopPropagation();
                     stageRef.current?.focus({ preventScroll: true });
                     stageRef.current?.setPointerCapture(event.pointerId);
-                    tailRef.current = { pointerId: event.pointerId, layer: text, moved: false }; setTailDraft(text);
+                    interaction.begin('tail', { pointerId: event.pointerId, layer: text, moved: false });
                   }} />
               </svg>;
             })()}

@@ -1,7 +1,6 @@
-import type { DecodeResult } from '../domain/designCodec';
 import { createEmojiAssetRef, type EmojiAssetRef } from '../domain/emoji';
 import type { PackSnapshot } from '../domain/pack';
-import type { EmojiPackCatalog } from '../ports/emojiPackCatalog';
+import type { EmojiPackCatalog, CatalogResult } from '../ports/emojiPackCatalog';
 
 export function artworkMissingMessage(
   packName: string,
@@ -15,12 +14,14 @@ export async function remapSource(
   current: EmojiAssetRef,
   target: PackSnapshot,
   catalog: EmojiPackCatalog,
-): Promise<DecodeResult<EmojiAssetRef>> {
+): Promise<CatalogResult<EmojiAssetRef>> {
   const summary = catalog.summaryFor(target.pack);
   const name = summary?.name ?? target.pack;
-  if (!(await catalog.hasGlyph(target, current.codepoint))) {
+  const coverage = await catalog.hasGlyph(target, current.codepoint);
+  if (!coverage.ok) return coverage;
+  if (!coverage.value) {
     return {
-      ok: false,
+      ok: false, kind: 'missing',
       error: artworkMissingMessage(name, target.packVersion, current.grapheme),
     };
   }

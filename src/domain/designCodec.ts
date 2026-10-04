@@ -1,13 +1,9 @@
-import { preserveLegacyAnchors, resolveBubbleAttachments } from './bubbleAttachment';
+import { resolveBubbleAttachments } from './bubbleAttachment';
 import {
-  DEFAULT_TRANSFORM,
   DESIGN_LIMITS,
   type Appearance,
-  type CanvasLayout,
   type BrushStroke,
   type DesignDocument,
-  type DesignDocumentV1,
-  type DesignDocumentV2,
   type EmojiLayer,
   type MaskStroke,
   type Outline,
@@ -182,50 +178,6 @@ function decodeAppearance(value: unknown, path = 'appearance'): DecodeResult<App
   };
 }
 
-function decodeDesignDocumentV1(document: Record<string, unknown>): DecodeResult<DesignDocumentV1> {
-  const source = decodeSource(document.source);
-  if (!source.ok) return source;
-  const legacyTransform = record(document.transform);
-  if (!legacyTransform) return { ok: false, error: 'transform must be an object' };
-  const transform = decodeTransform(
-    { ...legacyTransform, x: DEFAULT_TRANSFORM.x, y: DEFAULT_TRANSFORM.y },
-  );
-  if (!transform.ok) return transform;
-  const appearance = decodeAppearance(document.appearance);
-  if (!appearance.ok) return appearance;
-  const { x: _x, y: _y, ...positionlessTransform } = transform.value;
-  return {
-    ok: true,
-    value: {
-      version: 1,
-      source: source.value,
-      transform: positionlessTransform,
-      appearance: appearance.value,
-    },
-  };
-}
-
-export function migrateDesignDocumentV1(document: DesignDocumentV1): DesignDocument {
-  return {
-    version: 7,
-    groups: [],
-    canvas: { layout: 'default' },
-    layers: [
-      {
-        id: 'emoji-1',
-        kind: 'emoji',
-        name: 'Emoji',
-        visible: true,
-        opacity: 1,
-        source: document.source,
-        transform: { ...DEFAULT_TRANSFORM, ...document.transform },
-        appearance: document.appearance,
-        mask: [],
-      },
-    ],
-  };
-}
-
 function decodeStrokePoint(value: unknown, path: string): DecodeResult<StrokePoint> {
   const point = record(value);
   if (!point) return { ok: false, error: `${path} must be an object` };
@@ -262,7 +214,7 @@ function decodeMaskStroke(value: unknown, path: string): DecodeResult<MaskStroke
   if (!points.ok) return points;
   const width = finite(stroke.width, `${path}.width`, DESIGN_LIMITS.strokeWidth);
   if (!width.ok) return width;
-  const mode = stroke.mode ?? 'erase';
+  const mode = stroke.mode;
   if (mode !== 'erase' && mode !== 'restore') {
     return { ok: false, error: `${path}.mode must be "erase" or "restore"` };
   }
@@ -300,7 +252,6 @@ function decodeBrushStroke(value: unknown, path: string): DecodeResult<BrushStro
 }
 
 function decodeMask(value: unknown, path: string): DecodeResult<readonly MaskStroke[]> {
-  if (value === undefined) return { ok: true, value: [] };
   if (!Array.isArray(value) || value.length > DESIGN_CAPACITY.strokesPerCollection) {
     return { ok: false, error: `${path} must be an array with at most ${DESIGN_CAPACITY.strokesPerCollection} strokes` };
   }
@@ -325,9 +276,7 @@ function decodeLayerIdentity(
   }
   const visible = boolean(layer.visible, `${path}.visible`);
   if (!visible.ok) return visible;
-  const opacity = layer.opacity === undefined
-    ? { ok: true as const, value: 1 }
-    : finite(layer.opacity, `${path}.opacity`, DESIGN_LIMITS.opacity);
+  const opacity = finite(layer.opacity, `${path}.opacity`, DESIGN_LIMITS.opacity);
   if (!opacity.ok) return opacity;
   return {
     ok: true,
@@ -368,9 +317,7 @@ function decodeStrokeLayer(value: unknown, index: number): DecodeResult<StrokeLa
   if (!layer) return { ok: false, error: `${path} must be an object` };
   const identity = decodeLayerIdentity(layer, path);
   if (!identity.ok) return identity;
-  const transform = layer.transform === undefined
-    ? { ok: true as const, value: DEFAULT_TRANSFORM }
-    : decodeTransform(layer.transform, `${path}.transform`);
+  const transform = decodeTransform(layer.transform, `${path}.transform`);
   if (!transform.ok) return transform;
   if (!Array.isArray(layer.strokes)
       || layer.strokes.length > DESIGN_CAPACITY.strokesPerCollection) {
@@ -399,9 +346,7 @@ function decodeStrokeLayer(value: unknown, index: number): DecodeResult<StrokeLa
 function decodeNodeFields(layer: Record<string, unknown>, path: string) {
   const identity = decodeLayerIdentity(layer, path);
   if (!identity.ok) return identity;
-  const transform = layer.transform === undefined
-    ? { ok: true as const, value: DEFAULT_TRANSFORM }
-    : decodeTransform(layer.transform, `${path}.transform`);
+  const transform = decodeTransform(layer.transform, `${path}.transform`);
   if (!transform.ok) return transform;
   const mask = decodeMask(layer.mask, `${path}.mask`);
   if (!mask.ok) return mask;
@@ -528,11 +473,7 @@ function decodeRasterLayer(value: unknown, index: number): DecodeResult<RasterLa
   return { ok: true, value: { ...common.value, kind: 'raster', resolution: resolution.value, runs } };
 }
 
-function decodeDesignDocumentV2(document: Record<string, unknown>): DecodeResult<DesignDocumentV2> {
-  const canvas = record(document.canvas);
-  if (!canvas || canvas.background !== 'transparent') {
-    return { ok: false, error: 'canvas.background must be "transparent"' };
-  }
+function decodeLayers(document: Record<string, unknown>): DecodeResult<readonly SceneLayer[]> {
   if (!Array.isArray(document.layers) || document.layers.length === 0
       || document.layers.length > DESIGN_CAPACITY.layers) {
     return { ok: false, error: `layers must contain between 1 and ${DESIGN_CAPACITY.layers} layers` };
@@ -580,7 +521,7 @@ function decodeDesignDocumentV2(document: Record<string, unknown>): DecodeResult
   }
   return {
     ok: true,
-    value: { version: 2, canvas: { background: 'transparent' }, layers },
+    value: layers,
   };
 }
 
@@ -601,35 +542,22 @@ function decodeSelectionGroups(value: unknown, layers: readonly SceneLayer[]): D
   return error ? { ok: false, error } : { ok: true, value: groups };
 }
 
-/** Legacy recipes and scenes explicitly migrate to a default canvas layout. */
+/** Decode the current format without adapting historical document shapes. */
 export function decodeDesignDocument(value: unknown): DecodeResult<DesignDocument> {
   const document = record(value);
   if (!document) return { ok: false, error: 'design document must be an object' };
-  if (document.version === 1) {
-    const decoded = decodeDesignDocumentV1(document);
-    return decoded.ok ? { ok: true, value: migrateDesignDocumentV1(decoded.value) } : decoded;
+  if (document.version !== 7) return { ok: false, error: `unsupported design document version: ${String(document.version)}` };
+  const layout = record(document.canvas)?.layout;
+  if (layout !== 'default' && layout !== 'comic4' && layout !== 'comic6') {
+    return { ok: false, error: 'canvas.layout must be default, comic4, or comic6' };
   }
-  if (document.version === 2 || document.version === 3 || document.version === 4 || document.version === 5 || document.version === 6 || document.version === 7) {
-    const layout = (document.version === 4 || document.version === 5 || document.version === 6 || document.version === 7) ? record(document.canvas)?.layout : 'default';
-    if (layout !== 'default' && layout !== 'comic4' && layout !== 'comic6') {
-      return { ok: false, error: 'canvas.layout must be default, comic4, or comic6' };
-    }
-    const scene = decodeDesignDocumentV2(document.version === 4 || document.version === 5 || document.version === 6 || document.version === 7
-      ? { ...document, canvas: { background: 'transparent' } } : document);
-    if (!scene.ok) return scene;
-    if (scene.value.layers.some((layer) => layer.kind === 'text' && layer.bubble?.speakerId
-      && !scene.value.layers.some((speaker) => speaker.id === layer.bubble!.speakerId && speaker.kind === 'emoji'))) {
-      return { ok: false, error: 'bubble speaker must reference an emoji layer' };
-    }
-    const groups = document.version === 2
-      ? { ok: true as const, value: [] }
-      : decodeSelectionGroups(document.groups, scene.value.layers);
-    if (!groups.ok) return groups;
-    const current: DesignDocument = { ...scene.value, version: 7, canvas: { layout: layout as CanvasLayout }, groups: groups.value };
-    return { ok: true, value: resolveBubbleAttachments(document.version === 7 ? current : preserveLegacyAnchors(current)) };
+  const layers = decodeLayers(document);
+  if (!layers.ok) return layers;
+  if (layers.value.some((layer) => layer.kind === 'text' && layer.bubble?.speakerId
+    && !layers.value.some((speaker) => speaker.id === layer.bubble!.speakerId && speaker.kind === 'emoji'))) {
+    return { ok: false, error: 'bubble speaker must reference an emoji layer' };
   }
-  return {
-    ok: false,
-    error: `unsupported design document version: ${String(document.version)}`,
-  };
+  const groups = decodeSelectionGroups(document.groups, layers.value);
+  if (!groups.ok) return groups;
+  return { ok: true, value: resolveBubbleAttachments({ version: 7, canvas: { layout }, layers: layers.value, groups: groups.value }) };
 }

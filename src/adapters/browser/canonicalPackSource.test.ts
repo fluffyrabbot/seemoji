@@ -30,7 +30,7 @@ const decodedImage = {} as CanvasImageSource;
 const catalog = (manifest: PackManifest = MANIFEST): EmojiPackCatalog => ({
   list: async () => ({ ok: true, value: [] }),
   get: async () => ({ ok: true, value: manifest }),
-  hasGlyph: async () => true,
+  hasGlyph: async () => ({ ok: true, value: true }),
   assetUrl: async () => ({ ok: true, value: url }),
   summaryFor: () => null,
 });
@@ -97,10 +97,10 @@ describe('CanonicalPackSource', () => {
   it('reports catalog and decoder failures with actionable kinds', async () => {
     const missingCatalog: EmojiPackCatalog = {
       ...catalog(),
-      get: async () => ({ ok: false, error: 'manifest unavailable' }),
+      get: async () => ({ ok: false, kind: 'unavailable', error: 'manifest unavailable' }),
     };
     await expect(new CanonicalPackSource({ catalog: missingCatalog }).load(ref))
-      .rejects.toMatchObject({ kind: 'missing' });
+      .rejects.toMatchObject({ kind: 'network' });
 
     const source = new CanonicalPackSource({
       catalog: catalog(),
@@ -110,4 +110,25 @@ describe('CanonicalPackSource', () => {
     await expect(source.load(ref)).rejects.toBeInstanceOf(EmojiAssetError);
     await expect(source.load(ref)).rejects.toMatchObject({ kind: 'decode' });
   });
+});
+
+it('evicts decoded artwork by pixel weight while retaining recent entries', async () => {
+  const fetchImpl = vi.fn(async () => response('<svg/>', 'image/svg+xml'));
+  const image = document.createElement('canvas'); image.width = 256; image.height = 256;
+  const source = new CanonicalPackSource({ catalog: catalog(), fetchImpl,
+    decodeImage: async () => image, cacheBudgetBytes: 2 * 256 * 256 * 4 });
+  const second = createEmojiAssetRef('😄'), third = createEmojiAssetRef('😎');
+  await source.load(ref); await source.load(second); await source.load(ref); await source.load(third);
+  await source.load(ref); expect(fetchImpl).toHaveBeenCalledTimes(3);
+  await source.load(second); expect(fetchImpl).toHaveBeenCalledTimes(4);
+});
+
+it('shares pending loads but does not retain decoded artwork exceeding the budget', async () => {
+  const image = document.createElement('canvas'); image.width = 1024; image.height = 1024;
+  const fetchImpl = vi.fn(async () => response('<svg/>', 'image/svg+xml'));
+  const source = new CanonicalPackSource({ catalog: catalog(), fetchImpl,
+    decodeImage: async () => image, cacheBudgetBytes: 256 * 256 * 4 });
+  const first = source.load(ref); expect(source.load(ref)).toBe(first);
+  await first; await source.load(ref);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
 });

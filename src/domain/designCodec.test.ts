@@ -1,18 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DESIGN, getEmojiLayer, type DesignDocumentV1 } from './design';
+import { DEFAULT_DESIGN, getEmojiLayer } from './design';
 import { decodeDesignDocument } from './designCodec';
 
 describe('design document codec', () => {
-  it('round-trips a valid V5 scene document', () => {
+  it('round-trips a valid V7 scene document', () => {
     expect(decodeDesignDocument(JSON.parse(JSON.stringify(DEFAULT_DESIGN)))).toEqual({
       ok: true,
       value: DEFAULT_DESIGN,
     });
   });
 
-  it('promotes an existing V2 scene into an explicit empty group collection', () => {
-    const { groups: _groups, ...current } = DEFAULT_DESIGN;
-    expect(decodeDesignDocument({ ...current, version: 2, canvas: { background: 'transparent' } })).toEqual({ ok: true, value: DEFAULT_DESIGN });
+  it.each([1, 2, 3, 4, 5, 6, 8])('rejects unsupported document version %s', (version) => {
+    expect(decodeDesignDocument({ ...DEFAULT_DESIGN, version })).toMatchObject({ ok: false, error: expect.stringContaining('unsupported') });
   });
 
   it('round-trips named organizational groups without changing layer order', () => {
@@ -39,23 +38,6 @@ describe('design document codec', () => {
     const emoji = getEmojiLayer(DEFAULT_DESIGN);
     const layers = ['emoji-1', 'emoji-2', 'emoji-3', 'emoji-4'].map((id) => ({ ...emoji, id }));
     expect(decodeDesignDocument({ ...DEFAULT_DESIGN, layers, groups }).ok).toBe(false);
-  });
-
-  it('explicitly promotes a V1 recipe into a V5 emoji layer', () => {
-    const layer = getEmojiLayer(DEFAULT_DESIGN);
-    const { x: _x, y: _y, ...positionlessTransform } = layer.transform;
-    const versionOne: DesignDocumentV1 = {
-      version: 1,
-      source: layer.source,
-      transform: { ...positionlessTransform, rotate: 18 },
-      appearance: layer.appearance,
-    };
-    const decoded = decodeDesignDocument(versionOne);
-    expect(decoded.ok).toBe(true);
-    if (decoded.ok) {
-      expect(decoded.value.version).toBe(7);
-      expect(getEmojiLayer(decoded.value).transform).toMatchObject({ x: 0, y: 0, rotate: 18 });
-    }
   });
 
   it('rejects unknown versions instead of silently coercing them', () => {
@@ -169,31 +151,9 @@ describe('design document codec', () => {
     });
   });
 
-  it('normalizes earlier V2 paint layers with identity transforms and erase masks', () => {
-    const decoded = decodeDesignDocument({
-      ...DEFAULT_DESIGN,
-      layers: [
-        ...DEFAULT_DESIGN.layers,
-        {
-          id: 'paint-1',
-          kind: 'strokes',
-          name: 'Paint',
-          visible: true,
-          opacity: 1,
-          strokes: [],
-          mask: [{
-            id: 'mask-1',
-            points: [{ x: 0.5, y: 0.5, pressure: 0.5 }],
-            width: 0.03,
-          }],
-        },
-      ],
-    });
-    expect(decoded.ok).toBe(true);
-    if (decoded.ok) {
-      expect(decoded.value.layers[1]?.transform).toEqual(getEmojiLayer(DEFAULT_DESIGN).transform);
-      expect(decoded.value.layers[1]?.mask[0]).toMatchObject({ mode: 'erase' });
-    }
+  it.each(['opacity', 'mask', 'transform'])('requires current node field %s', (field) => {
+    const layer = { ...getEmojiLayer(DEFAULT_DESIGN), [field]: undefined };
+    expect(decodeDesignDocument({ ...DEFAULT_DESIGN, layers: [layer] }).ok).toBe(false);
   });
 
   it('round-trips structured and bounded raster scene nodes', () => {

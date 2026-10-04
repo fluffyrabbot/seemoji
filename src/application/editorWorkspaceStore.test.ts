@@ -455,3 +455,22 @@ describe('EditorWorkspaceStore', () => {
     store.dispose();
   });
 });
+
+it('selection commands report rejected/stale outcomes and journal accepted commands before returning', async () => {
+  const repository = new IndexedDbProjectRepository(new IDBFactory(), 'selection-commands');
+  const store = new EditorWorkspaceStore(new WorkspaceController(repository));
+  await store.load();
+  const epoch = store.getSnapshot().editorSessionEpoch;
+  const before = store.getSnapshot().editor;
+  expect(store.executeSelection({ kind: 'align', mode: 'left' }, epoch).kind).toBe('rejected');
+  expect(store.getSnapshot().editor).toBe(before);
+  expect(store.executeSelection({ kind: 'duplicate' }, epoch).kind).toBe('applied');
+  expect(store.getSnapshot().editor.design.layers).toHaveLength(2);
+  expect(store.snapshot().activeProject.design).toBe(store.getSnapshot().editor.design);
+  expect(store.getSnapshot().editor.past).toHaveLength(1);
+  await store.create();
+  const afterSwitch = store.getSnapshot().editor;
+  expect(store.executeSelection({ kind: 'duplicate' }, epoch).kind).toBe('stale');
+  expect(store.getSnapshot().editor).toBe(afterSwitch);
+  store.dispose();
+});

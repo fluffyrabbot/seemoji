@@ -68,11 +68,11 @@ describe('HttpEmojiPackCatalog', () => {
     await expect(catalog.hasGlyph(
       { pack: 'twemoji', packVersion: '15.1.0' },
       '1f600',
-    )).resolves.toBe(true);
+    )).resolves.toEqual({ ok: true, value: true });
     await expect(catalog.hasGlyph(
       { pack: 'twemoji', packVersion: '15.1.0' },
       '41',
-    )).resolves.toBe(false);
+    )).resolves.toEqual({ ok: true, value: false });
     const asset = await catalog.assetUrl(createEmojiAssetRef('😀'));
     expect(asset).toEqual({
       ok: true,
@@ -124,7 +124,7 @@ describe('HttpEmojiPackCatalog', () => {
     await expect(throwing.hasGlyph(
       { pack: 'twemoji', packVersion: '15.1.0' },
       '1f600',
-    )).resolves.toBe(false);
+    )).resolves.toMatchObject({ ok: false, kind: 'unavailable' });
   });
 
   it('retries a manifest after a transient failure', async () => {
@@ -142,4 +142,26 @@ describe('HttpEmojiPackCatalog', () => {
       .resolves.toMatchObject({ ok: true });
     expect(attempts).toBe(2);
   });
+});
+
+it.each([503, 404])('clears a failed index request after HTTP %s and deduplicates retry callers', async (status) => {
+  const fetchImpl = vi.fn().mockResolvedValueOnce(response({}, status)).mockResolvedValueOnce(response(INDEX));
+  const catalog = new HttpEmojiPackCatalog({ baseUrl: 'https://seemoji.test', fetchImpl });
+  await expect(catalog.list()).resolves.toMatchObject({ ok: false, kind: status === 404 ? 'missing' : 'unavailable' });
+  const first = catalog.list(), second = catalog.list();
+  expect(first).toBe(second);
+  await expect(first).resolves.toMatchObject({ ok: true });
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
+
+it('distinguishes invalid manifests, missing glyphs, and unavailable coverage', async () => {
+  const fetchImpl = vi.fn().mockResolvedValueOnce(response({}, 503))
+    .mockResolvedValueOnce(response({ ...MANIFEST, version: 'bad' }))
+    .mockResolvedValueOnce(response(MANIFEST));
+  const catalog = new HttpEmojiPackCatalog({ baseUrl: 'https://seemoji.test', fetchImpl });
+  const snapshot = { pack: 'twemoji' as const, packVersion: '15.1.0' };
+  await expect(catalog.hasGlyph(snapshot, '1f600')).resolves.toMatchObject({ ok: false, kind: 'unavailable' });
+  await expect(catalog.hasGlyph(snapshot, '1f600')).resolves.toMatchObject({ ok: false, kind: 'invalid' });
+  await expect(catalog.hasGlyph(snapshot, '41')).resolves.toEqual({ ok: true, value: false });
+  await expect(catalog.assetUrl(createEmojiAssetRef('A'))).resolves.toMatchObject({ ok: false, kind: 'missing' });
 });

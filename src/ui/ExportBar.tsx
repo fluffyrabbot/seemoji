@@ -1,20 +1,15 @@
-import { EXPORT_SIZES } from '../../application/editor';
-import type { ExportBarRenderProps } from '../editor/contracts';
+import { EXPORT_SIZES } from '../application/editor';
+import type { ExportBarRenderProps } from './editor/contracts';
 
-interface Props extends ExportBarRenderProps {
-  readonly diagnosticVariant: 'control-a' | 'control-b';
-}
-
-export default function ExportBarAa({
+export default function ExportBar({
   size,
   prepared,
   copying,
   onSizeChange,
   onCopy,
   onDownload,
-  diagnosticVariant,
-}: Props) {
-  return <div className="export-bar" data-experiment-variant={diagnosticVariant}>
+}: ExportBarRenderProps) {
+  return <div className="export-bar">
     <label className="size-control">
       <span>Export size</span>
       <select value={size}

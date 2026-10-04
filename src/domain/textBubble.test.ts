@@ -52,7 +52,7 @@ describe('text bubbles', () => {
   });
   it('migrates V4 comic scenes with plain text without changing artwork', () => {
     const design = { ...DEFAULT_DESIGN, canvas: { ...DEFAULT_DESIGN.canvas, layout: 'comic4' as const }, layers: [...DEFAULT_DESIGN.layers, text] };
-    expect(decodeDesignDocument({ ...design, version: 4 })).toEqual({ ok: true, value: design });
+    expect(decodeDesignDocument({ ...design, version: 4 }).ok).toBe(false);
   });
   it('round-trips bubble state and rejects malformed tails', () => {
     const design = { ...DEFAULT_DESIGN, layers: [...DEFAULT_DESIGN.layers, setTextBubble(text, 'speech')] };

@@ -9,7 +9,7 @@ import {
   type PackSummary,
   type PackVersionSummary,
 } from '../domain/pack';
-import type { EmojiPackCatalog } from '../ports/emojiPackCatalog';
+import type { EmojiPackCatalog, CatalogResult } from '../ports/emojiPackCatalog';
 import type { PackPreferenceStore } from '../ports/packPreference';
 import { artworkMissingMessage, remapSource } from './remapSource';
 
@@ -129,6 +129,7 @@ export class PackSession {
 
   load(): Promise<PackSessionSnapshot> {
     if (this.#loadRequest) return this.#loadRequest;
+    this.#set({ ...this.#snapshot, status: 'loading', error: null });
     this.#loadRequest = Promise.all([
       this.#catalog.list().catch((cause: unknown) => ({
         ok: false as const,
@@ -138,6 +139,7 @@ export class PackSession {
     ])
       .then(([catalog, preference]) => {
         if (!catalog.ok) {
+          this.#loadRequest = null;
           this.#set({
             status: 'error',
             selected: DEFAULT_PACK_SNAPSHOT,
@@ -162,17 +164,19 @@ export class PackSession {
   async pick(grapheme: string, target: PackPickTarget): Promise<PackOperationResult> {
     const operation = this.#beginOperation(target);
     if (!operation) return { kind: 'stale' };
-    await this.load();
+    const loaded = await this.load();
     if (!this.#isCurrent(operation)) return { kind: 'stale' };
+    if (loaded.status === 'error') return { kind: 'rejected', error: loaded.error ?? 'Emoji catalog is unavailable.' };
     const selected = this.#snapshot.selected;
-    let covered: boolean;
+    let covered: CatalogResult<boolean>;
     try {
       covered = await this.#catalog.hasGlyph(selected, toCodepoint(grapheme));
     } catch (cause) {
       return this.#rejectCurrent(operation, cause);
     }
     if (!this.#isCurrent(operation)) return { kind: 'stale' };
-    if (!covered) {
+    if (!covered.ok) return { kind: 'rejected', error: covered.error };
+    if (!covered.value) {
       const name = this.#catalog.summaryFor(selected.pack)?.name ?? selected.pack;
       return {
         kind: 'rejected',
@@ -213,10 +217,11 @@ export class PackSession {
     const operation = layerId === null ? null : this.#beginOperation({ kind: 'replace', layerId });
     const generation = layerId === null ? ++this.#operationGeneration : operation?.generation;
     if (generation === undefined) return { kind: 'stale' };
-    await this.load();
+    const loaded = await this.load();
     if (generation !== this.#operationGeneration || (operation && !this.#isCurrent(operation))) {
       return { kind: 'stale' };
     }
+    if (loaded.status === 'error') return { kind: 'rejected', error: loaded.error ?? 'Emoji catalog is unavailable.' };
     const target = resolvePackPreference(requested, this.#snapshot.packs);
 
     this.#set({

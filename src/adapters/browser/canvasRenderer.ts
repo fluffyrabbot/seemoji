@@ -1,3 +1,4 @@
+import { WeightedCache } from '../../application/weightedCache';
 import { bubblePaths, fitText, textLayout } from '../../domain/textBubble';
 import { comicPanels } from '../../domain/canvasLayout';
 import type { BrushStroke, MaskStroke, StrokePoint } from '../../domain/design';
@@ -124,16 +125,6 @@ const drawRaster = (
   for (const run of layer.runs) {
     destination.fillStyle = run.color;
     destination.fillRect(run.xStart * cell, run.y * cell, (run.xEnd - run.xStart + 1) * cell, cell);
-  }
-};
-
-const setLru = <T,>(map: Map<string, T>, key: string, value: T, maximum: number) => {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > maximum) {
-    const oldest = map.keys().next().value;
-    if (oldest === undefined) break;
-    map.delete(oldest);
   }
 };
 
@@ -279,7 +270,7 @@ function drawEmoji(
 }
 
 export class BrowserCanvasRenderer implements RendererPort {
-  readonly #layerCache = new Map<string, { readonly canvas: HTMLCanvasElement; readonly warnings: readonly string[] }>();
+  readonly #layerCache = new WeightedCache<string, { readonly canvas: HTMLCanvasElement; readonly warnings: readonly string[] }>(32 * 1024 * 1024);
 
   render(scene: RenderSceneInput): RenderedFrame {
     const canvas = createCanvas(scene.size);
@@ -301,7 +292,6 @@ export class BrowserCanvasRenderer implements RendererPort {
       let layerCanvas: HTMLCanvasElement;
       const cached = this.#layerCache.get(layer.cacheKey);
       if (cached) {
-        setLru(this.#layerCache, layer.cacheKey, cached, 64);
         layerCanvas = cached.canvas;
         warnings.push(...cached.warnings);
       } else {
@@ -324,7 +314,7 @@ export class BrowserCanvasRenderer implements RendererPort {
           }
           applyMask(layerContext, layer.mask, scene.size);
         }
-        setLru(this.#layerCache, layer.cacheKey, { canvas: layerCanvas, warnings: layerWarnings }, 64);
+        this.#layerCache.set(layer.cacheKey, { canvas: layerCanvas, warnings: layerWarnings }, layerCanvas.width * layerCanvas.height * 4);
         warnings.push(...layerWarnings);
       }
       destination.save();

@@ -39,7 +39,7 @@ npm run test:persistence-stress # deep repository and controller state-machine r
 
 The complete gate builds production assets and then enforces independent
 JavaScript budgets for the document's initial static module graph (at most
-216,000 raw bytes and 67,000 gzip-9 bytes) and all deferred or otherwise
+218,000 raw bytes and 67,500 gzip-9 bytes) and all deferred or otherwise
 unreachable chunks (at most 12,000 raw bytes and 4,500 gzip-9 bytes). It also
 reports the informational total. The limits track the measured contextual editor, with advanced controls,
 and the full emoji search catalog loaded only on interaction. See
@@ -79,7 +79,7 @@ EditorWorkspaceStore ────────► WorkspaceController ───�
    └─ editorReducer + history         └──── WorkspaceSync ─────┘
    │
    ▼
-DesignDocumentV7 scene + canvas layout + named selection groups
+DesignDocument (V7) scene + canvas layout + named selection groups
    │
    ▼
 RenderCoordinator ◄────────── EmojiAssetSource
@@ -103,13 +103,6 @@ RenderCoordinator ◄────────── EmojiAssetSource
 - `src/ui` contains React-compatible components rendered by `preact/compat`.
   `src/main.tsx` is the only composition root and selects the browser adapters.
 
-UI experiments use one typed, versioned assignment runtime and a single
-controller-owned export-surface slot. The checked-in experiment is deliberately
-A/A and the production event sink is deliberately null, so it validates both
-render branches and sticky assignment without collecting data. See
-[UI experimentation](docs/ui-experimentation.md) for the lifecycle and event
-semantics required before introducing a treatment or collector.
-
 `src/architecture.test.ts` enforces that the domain, ports, application, and
 rendering adapters cannot import React, Preact, or the UI layer. A separate
 [Preact compatibility experiment](docs/preact-compatibility-experiment.md)
@@ -124,14 +117,14 @@ not treat Strict Mode behavior as equivalent between the two runtimes.
 
 ## Design and rendering invariants
 
-`DesignDocumentV7` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
+`DesignDocument (V7)` is an ordered scene with a default or four-/six-panel comic canvas, durable named selection groups, and a
 common scene-node contract for emoji, pressure strokes, geometric shapes, text,
 and bounded run-length raster fills. Every layer owns a
 non-destructive mask: erasing and restoration append ordered mask operations
 instead of changing source artwork or brush strokes. Paint layers also own an
 affine transform, so moving, resizing, and rotating them never rewrites points.
-Unknown document versions are rejected. V1 recipes and V2–V3 scenes have explicit one-way
-migrations into the current scene model. Groups retain their identity through history,
+Only the current V7 document format is accepted. Earlier recipes and scenes are rejected;
+unsupported stored projects remain available through quarantine recovery. Groups retain their identity through history,
 autosave, project export, and workspace archives. Their non-overlapping membership
 organizes selection without changing layer paint order.
 **Edit members** enters a temporary group editing mode: select, reshape, restyle,
@@ -172,8 +165,9 @@ then runs an iterative pressure-aware path simplifier at commit time.
 The render coordinator resolves artwork for every emoji layer and hands an
 ordered scene to the browser compositor. Each layer renders into an isolated
 surface, receives its mask with `destination-out`, and is then composited at
-layer opacity. Content-keyed per-layer caches avoid repainting pixels for
-transform-only edits. Preview and PNG export therefore use the same paint pipeline.
+layer opacity. Paint identities reuse immutable stroke collections without serializing their points during transforms.
+Frame and layer caches enforce 16 MiB and 32 MiB pixel budgets.
+Preview scheduling retains only the latest waiting request; PNG preparation runs independently. Preview and PNG export therefore use the same paint pipeline.
 
 Blur and outline widths are stored as output-relative units. Rendering, selection
 handles, masks, and inspector commands share the same affine geometry. Emoji are
@@ -183,9 +177,7 @@ Group moves, scaling, and rotation apply one constrained operation to the entire
 selection, preserving spacing and mirror behavior at the editable position limits.
 
 Text boxes have persistent, contrasting editing guides, including on comic canvases.
-These guides do not render into exported PNGs. The Saved styles inspector has been
-removed; existing saved-style storage is left intact and its standalone data codecs
-and repository remain available for recovery tooling.
+These guides do not render into exported PNGs. The obsolete saved-style subsystem has been removed; built-in inspector styles remain.
 
 Artwork comes from eight write-once snapshots published at
 `fluffyrabbot/seemoji-packs`: Twemoji, Noto Emoji, Fluent Emoji Color/Flat/High Contrast,
@@ -239,7 +231,6 @@ under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Text layers support Plain, Speech, and Thought presentation with wrapped text, automatic
 padding, and a draggable tail. The bubble is part of the text object and exports with it.
 Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
-V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
@@ -253,13 +244,10 @@ tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
 with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
-V5 projects migrate to V6 without adding attachments.
 
 Tail drops retain an exact speaker-local anchor through movement, rotation, and
 resizing. Choosing a speaker from the card uses a default anchor near its lower
-center. Detaching removes the anchor while keeping the endpoint. V6 attachments
-migrate to V7 using their existing endpoints, preserving the appearance of saved
-artwork. Tail coordinates may extend outside the text layer or page.
+center. Detaching removes the anchor while keeping the endpoint. Tail coordinates may extend outside the text layer or page.
 
 Free tails show a drag-to-attach hint and Choose speaker. The attached emoji chip
 opens the same picker to change speakers. Arrow keys navigate choices, Enter

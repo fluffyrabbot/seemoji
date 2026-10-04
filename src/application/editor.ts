@@ -18,8 +18,8 @@ import {
 } from '../domain/design';
 import { DESIGN_CAPACITY, hasDesignCapacity } from '../domain/designCapacity';
 import type { EmojiAssetRef } from '../domain/emoji';
-import { copySelectionGroups, expandGroupSelection, pruneSelectionGroups, selectionGroupError } from '../domain/selectionGroups';
-import { translateSelection } from '../domain/selectionTransforms';
+import { expandGroupSelection, pruneSelectionGroups, selectionGroupError } from '../domain/selectionGroups';
+import { captureSelection, cloneSelection, insertSelection } from '../domain/selectionCommands';
 
 export const EXPORT_SIZES = [48, 128, 256] as const;
 export type ExportSize = (typeof EXPORT_SIZES)[number];
@@ -288,16 +288,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     }
     case 'insert-layers': {
-      if (action.layers.length === 0
-          || state.design.layers.length + action.layers.length > DESIGN_CAPACITY.layers) return state;
-      const insertedIds = new Set(action.layers.map((layer) => layer.id));
-      if (insertedIds.size !== action.layers.length
-          || action.layers.some((layer) => !layer.id || reservedId(state.design, layer.id))
-          || action.groups.some((group) => group.layerIds.some((id) => !insertedIds.has(id)))) return state;
-      const design = { ...state.design, layers: [...state.design.layers, ...action.layers],
-        groups: [...state.design.groups, ...action.groups] };
-      if (!hasDesignCapacity(design) || selectionGroupError(design.groups, design.layers)) return state;
-      return { ...recordDesign(state, design), selectedLayerIds: action.layers.map((layer) => layer.id), editingGroupId: null };
+      const inserted = insertSelection(state.design, action);
+      return inserted.ok ? { ...recordDesign(state, inserted.value),
+        selectedLayerIds: action.layers.map((layer) => layer.id), editingGroupId: null } : state;
     }
     case 'update-layer': {
       const current = getLayer(state.design, action.layer.id);
@@ -324,51 +317,29 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       );
     }
     case 'duplicate-layer': {
-      const layer = getLayer(state.design, action.layerId);
-      if (!layer || reservedId(state.design, action.duplicateId)
-          || state.design.layers.length >= DESIGN_CAPACITY.layers) {
-        return state;
-      }
-      const index = state.design.layers.findIndex((candidate) => candidate.id === layer.id);
-      const duplicate = { ...layer, id: action.duplicateId, name: action.name };
+      const source = captureSelection(state.design, [action.layerId]);
+      const copied = cloneSelection(source, new Map([[action.layerId, action.duplicateId]]), new Map(), 0);
+      if (!copied.ok || !action.name.trim() || action.name.length > 80) return state;
+      const duplicate = { ...copied.value.layers[0]!, name: action.name };
+      const inserted = insertSelection(state.design, { layers: [duplicate], groups: [] });
+      if (!inserted.ok) return state;
       const layers = [...state.design.layers];
-      layers.splice(index + 1, 0, duplicate);
-      const design = { ...state.design, layers };
-      if (!hasDesignCapacity(design)) return state;
-      return {
-        ...recordDesign(state, design),
-        selectedLayerIds: [duplicate.id],
-        editingGroupId: null,
-      };
+      layers.splice(layers.findIndex((layer) => layer.id === action.layerId) + 1, 0, duplicate);
+      return { ...recordDesign(state, { ...inserted.value, layers }),
+        selectedLayerIds: [duplicate.id], editingGroupId: null };
     }
     case 'duplicate-layers': {
       if (action.layerIds.length !== action.duplicateIds.length
-          || new Set(action.layerIds).size !== action.layerIds.length
-          || new Set(action.duplicateIds).size !== action.duplicateIds.length
-          || state.design.layers.length + action.layerIds.length > DESIGN_CAPACITY.layers) return state;
-      const copyingGroups = state.design.groups.filter((group) => group.layerIds.every((id) => action.layerIds.includes(id)));
-      if (copyingGroups.length !== action.duplicateGroupIds.length) return state;
-      const offset = action.offset ?? 0.035;
-      if (!Number.isFinite(offset) || action.layerIds.length === 0
-          || action.duplicateIds.some((id) => !id || reservedId(state.design, id))) return state;
-      const idMap = new Map(action.layerIds.map((id, index) => [id, action.duplicateIds[index]!]));
-      const originals = state.design.layers.filter((layer) => idMap.has(layer.id));
-      if (originals.length !== action.layerIds.length) return state;
-      const transforms = new Map(translateSelection(originals, { x: offset, y: offset })
-        .map(({ layerId, transform }) => [layerId, transform]));
-      const next = originals.map((layer) => ({ ...layer, id: idMap.get(layer.id)!,
-        name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)!,
-        ...(layer.kind === 'text' && layer.bubble?.speakerId ? { bubble: { ...layer.bubble,
-          speakerId: idMap.get(layer.bubble.speakerId) ?? layer.bubble.speakerId } } : {}) }));
-      const copiedGroups = copySelectionGroups(copyingGroups,
-        idMap,
-        new Map(copyingGroups.map((group, index) => [group.id, action.duplicateGroupIds[index]!])));
-      const design = { ...state.design, layers: [...state.design.layers, ...next],
-        groups: [...state.design.groups, ...copiedGroups] };
-      if (copiedGroups.length !== copyingGroups.length || !hasDesignCapacity(design)
-          || selectionGroupError(design.groups, design.layers)) return state;
-      return { ...recordDesign(state, design),
-        selectedLayerIds: next.map((copy) => copy.id), editingGroupId: null };
+          || new Set(action.layerIds).size !== action.layerIds.length) return state;
+      const source = captureSelection(state.design, action.layerIds);
+      if (source.layers.length !== action.layerIds.length || source.groups.length !== action.duplicateGroupIds.length) return state;
+      const copied = cloneSelection(source,
+        new Map(action.layerIds.map((id, index) => [id, action.duplicateIds[index]!])),
+        new Map(source.groups.map((group, index) => [group.id, action.duplicateGroupIds[index]!])), action.offset);
+      if (!copied.ok) return state;
+      const inserted = insertSelection(state.design, copied.value);
+      return inserted.ok ? { ...recordDesign(state, inserted.value),
+        selectedLayerIds: copied.value.layers.map((layer) => layer.id), editingGroupId: null } : state;
     }
     case 'create-group': {
       if (state.editingGroupId !== null) return state;

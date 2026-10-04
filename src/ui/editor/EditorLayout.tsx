@@ -150,6 +150,9 @@ export default function EditorLayout({ model, commands, renderExportBar }: Props
         </div>
         <section className="picker-region" id="emoji-source" aria-label="Emoji source">
           <div className="emoji-panel-shell">
+            {model.packs.status === 'error' && <p role="alert">
+              {model.packs.error} <button type="button" onClick={() => void commands.emoji.reloadCatalog()}>Retry catalog</button>
+            </p>}
             <EmojiPicker
               emoji={model.pickerEmoji}
               catalog={model.catalog}

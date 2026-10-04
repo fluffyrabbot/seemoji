@@ -1,4 +1,4 @@
-import { DEFAULT_TRANSFORM, type SceneLayer } from '../domain/design';
+import { DEFAULT_TRANSFORM, type SceneLayer } from './design';
 
 export type PlacementTool = 'text' | 'rectangle' | 'ellipse' | 'line';
 export interface PlacementPoint { readonly x: number; readonly y: number }

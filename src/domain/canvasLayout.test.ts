@@ -33,9 +33,9 @@ describe('comic canvas layouts', () => {
     expect(editorReducer(editorReducer(comic, { type: 'undo' }), { type: 'redo' }).design).toEqual(comic.design);
   });
 
-  it('migrates V3 canvases and rejects unknown layouts rather than losing page structure', () => {
+  it('rejects obsolete canvases and unknown layouts', () => {
     expect(decodeDesignDocument({ ...DEFAULT_DESIGN, version: 3, canvas: { background: 'transparent' } }))
-      .toEqual({ ok: true, value: DEFAULT_DESIGN });
+      .toMatchObject({ ok: false });
     expect(decodeDesignDocument({ ...DEFAULT_DESIGN, canvas: { layout: 'comic99' } }).ok).toBe(false);
   });
 });

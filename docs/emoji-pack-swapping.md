@@ -1514,3 +1514,19 @@ Free tails show a drag-to-attach hint and Choose speaker. The attached emoji chi
 opens the same picker to change speakers. Arrow keys navigate choices, Enter
 selects, and Escape closes the picker and restores focus without editing artwork.
 Selecting the current speaker preserves its exact anchor. Detach is one undo step.
+
+## Catalog failure recovery and artwork retention
+
+Catalog ports return typed `missing`, `unavailable`, or `invalid` failures. Coverage
+returns a successful boolean only after reading a valid manifest, so a network
+failure cannot masquerade as a missing glyph. Failed index and manifest requests
+are released from their caches; concurrent retry callers share the next request.
+Pack-session initialization also retries after failure. The editor exposes
+**Retry catalog**, and render failures expose **Retry render** without requiring
+a page reload or document mutation.
+
+Decoded artwork uses a 32 MiB weighted LRU. Pending loads reserve a 256×256 RGBA
+estimate, replaced by decoded dimensions on completion. Oversized images can be
+used by the requesting render but are not retained. Eviction releases cache
+references; it does not invalidate images still used by an active render. These
+limits bound cache retention, not all browser memory or concurrent network work.

@@ -255,57 +255,6 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
 });
 
-test('keeps the A/A export-bar assignment stable across page views', async ({ page }) => {
-  const exportBar = page.locator('.export-bar');
-  await expect(exportBar).toHaveAttribute('data-experiment-variant', /^control-[ab]$/);
-  const firstVariant = await exportBar.getAttribute('data-experiment-variant');
-  const storedVariant = await page.evaluate(() => {
-    const encoded = localStorage.getItem('seemoji:experiments:v1');
-    if (!encoded) return null;
-    const state = JSON.parse(encoded) as {
-      readonly assignments?: readonly {
-        readonly experimentKey?: string;
-        readonly variant?: string;
-      }[];
-    };
-    return state.assignments?.find(({ experimentKey }) =>
-      experimentKey === 'export-bar-aa')?.variant ?? null;
-  });
-  expect(storedVariant).toBe(firstVariant);
-
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
-  await expect(exportBar).toHaveAttribute('data-experiment-variant', firstVariant!);
-
-  for (const forcedVariant of ['control-a', 'control-b'] as const) {
-    await page.evaluate((variant) => {
-      const key = 'seemoji:experiments:v1';
-      const encoded = localStorage.getItem(key);
-      if (!encoded) throw new Error('experiment state is missing');
-      const state = JSON.parse(encoded) as {
-        readonly version: number;
-        readonly installationId: string;
-        readonly assignments: readonly {
-          readonly experimentKey: string;
-          readonly experimentVersion: number;
-          readonly variant: string;
-        }[];
-      };
-      localStorage.setItem(key, JSON.stringify({
-        ...state,
-        assignments: [{
-          experimentKey: 'export-bar-aa',
-          experimentVersion: 1,
-          variant,
-        }],
-      }));
-    }, forcedVariant);
-    await page.reload();
-    await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled({ timeout: 15_000 });
-    await expect(exportBar).toHaveAttribute('data-experiment-variant', forcedVariant);
-  }
-});
-
 test(
   'renders a stable default preview',
   { tag: '@visual' },
@@ -663,8 +612,8 @@ test('clips outlined and blurred emoji effects with the final transformed mask',
 
 test('maps masks through the full affine transform of non-emoji layers', async ({ page }) => {
   const design = {
-    version: 2,
-    canvas: { background: 'transparent' },
+    version: 7, groups: [],
+    canvas: { layout: 'default' },
     layers: [
       {
         id: 'emoji-1', kind: 'emoji', name: 'Emoji', visible: true, opacity: 1,
@@ -1754,8 +1703,7 @@ test('mirrored group rotation matches inspector, canvas handles, and exported pi
     skewX: 0, skewY: 0, flipH: false, flipV: false };
   const shape = { kind: 'shape', visible: true, opacity: 1, mask: [], shape: 'rectangle',
     bounds: { x: 0.45, y: 0.35, width: 0.2, height: 0.1 }, stroke: null };
-  // Importing a v2 document also exercises migration into the durable group format.
-  const design = { version: 2, canvas: { background: 'transparent' }, layers: [
+  const design = { version: 7, groups: [], canvas: { layout: 'default' }, layers: [
     { id: 'emoji-1', kind: 'emoji', name: 'Emoji', visible: false, opacity: 1, mask: [], transform,
       source: { pack: 'twemoji', packVersion: '15.1.0', codepoint: '1f600', grapheme: '😀' },
       appearance: { hue: 0, saturation: 1, brightness: 1, blur: 0, outline: null } },
@@ -2420,4 +2368,56 @@ test('speaker chip supports keyboard picking, Escape, and one-click detach witho
   expect(detached.bubble!.tail).toEqual(attached.bubble!.tail);
   await page.getByRole('button', { name: /Undo/ }).click();
   await expect(trigger).toHaveAttribute('aria-label', 'Change speaker: Emoji');
+});
+
+test('copy and paste remap a grouped bubble to its copied speaker in one undo step', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 });
+  await placeText(page);
+  await page.getByRole('textbox', { name: 'Edit canvas text', exact: true }).fill('Copied pair');
+  await page.keyboard.press('Enter');
+  await page.getByRole('group', { name: 'Text bubble', exact: true }).getByRole('button', { name: 'Speech', exact: true }).click();
+  await page.getByText('Choose speaker', { exact: true }).click();
+  await page.getByRole('button', { name: 'Attach to Emoji', exact: true }).click();
+  const canvas = page.getByLabel(/Interactive emoji canvas/);
+  await canvas.focus();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('ControlOrMeta+G');
+  const before = (await exportProject(page)).design;
+  await canvas.focus();
+  await page.keyboard.press('ControlOrMeta+C');
+  await page.keyboard.press('ControlOrMeta+V');
+  const pasted = (await exportProject(page)).design;
+  const copies = pasted.layers.filter((layer) => !before.layers.some(({ id }) => id === layer.id));
+  expect(copies).toHaveLength(2);
+  expect(copies.find(({ kind }) => kind === 'text')!.bubble!.speakerId)
+    .toBe(copies.find(({ kind }) => kind === 'emoji')!.id);
+  expect(pasted.groups).toHaveLength(2);
+  expect(new Set(pasted.groups[1]!.layerIds)).toEqual(new Set(copies.map(({ id }) => id)));
+  await page.getByRole('button', { name: /Undo/ }).click();
+  expect((await exportProject(page)).design).toEqual(before);
+  await page.getByRole('button', { name: /Redo/ }).click();
+  expect((await exportProject(page)).design).toEqual(pasted);
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  expect((await exportProject(page)).design).toEqual(pasted);
+});
+
+test('recovers from catalog and artwork outages without reloading the editor', async ({ page }) => {
+  let catalogOffline = true;
+  let artworkOffline = true;
+  await page.route('**/packs/index.json', (route) => catalogOffline
+    ? route.fulfill({ status: 503, body: 'Unavailable' }) : route.fallback());
+  await page.route('https://cdn.jsdelivr.net/**', (route) => artworkOffline ? route.abort('failed') : route.fallback());
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Retry catalog', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry render', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeDisabled();
+  catalogOffline = false;
+  await page.getByRole('button', { name: 'Retry catalog', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry catalog', exact: true })).toHaveCount(0);
+  artworkOffline = false;
+  await page.getByRole('button', { name: 'Retry render', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copy PNG' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Retry render', exact: true })).toHaveCount(0);
 });

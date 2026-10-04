@@ -46,7 +46,7 @@ const mount = async (options: {
   const catalog: EmojiPackCatalog = {
     list: async () => ({ ok: true, value: packs }),
     get: async () => ({ ok: true, value: manifest }),
-    hasGlyph: async (_snapshot, codepoint) => manifest.glyphs.includes(codepoint),
+    hasGlyph: async (_snapshot, codepoint) => ({ ok: true, value: manifest.glyphs.includes(codepoint) }),
     assetUrl: async (ref) => ({ ok: true, value: new URL(`${manifest.assetRoot}${ref.codepoint}.svg`) }),
     summaryFor: (id) => packs.find((pack) => pack.id === id) ?? null,
     ...options.catalogOverrides,

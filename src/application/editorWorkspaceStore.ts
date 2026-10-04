@@ -1,3 +1,4 @@
+import { planSelectionCommand, type SelectionCommand } from './selectionCommand';
 import type { DesignDocument } from '../domain/design';
 import type {
   ProjectQuarantineExport,
@@ -96,6 +97,16 @@ export class EditorWorkspaceStore {
     }
     this.#set({ ...this.#snapshot, workspace, editor: next });
     return next;
+  }
+
+  executeSelection(command: SelectionCommand, expectedEpoch: number):
+    { readonly kind: 'applied' | 'stale' } | { readonly kind: 'rejected'; readonly error: string } {
+    this.#assertActive();
+    if (!this.acceptsEditorMutations || expectedEpoch !== this.#snapshot.editorSessionEpoch) return { kind: 'stale' };
+    const result = planSelectionCommand(this.#snapshot.editor, command, () => crypto.randomUUID());
+    if (!result.ok) return { kind: 'rejected', error: result.error };
+    this.dispatch(result.value);
+    return { kind: 'applied' };
   }
 
   renameActive(name: string): WorkspaceSnapshot {

@@ -1,3 +1,4 @@
+import { WeightedCache } from '../../application/weightedCache';
 import type { EmojiAssetRef } from '../../domain/emoji';
 import type { PackManifest } from '../../domain/pack';
 import type { EmojiAssetSource } from '../../ports/emojiAssetSource';
@@ -57,13 +58,15 @@ export class CanonicalPackSource implements EmojiAssetSource {
   readonly #catalog: EmojiPackCatalog;
   readonly #fetch: FetchLike;
   readonly #decodeImage: DecodeImage;
-  readonly #cache = new Map<string, Promise<CanvasImageSource>>();
+  readonly #cache: WeightedCache<string, Promise<CanvasImageSource>>;
 
   constructor(options: {
     readonly catalog: EmojiPackCatalog;
     readonly fetchImpl?: FetchLike;
     readonly decodeImage?: DecodeImage;
+    readonly cacheBudgetBytes?: number;
   }) {
+    this.#cache = new WeightedCache(options.cacheBudgetBytes ?? 32 * 1024 * 1024);
     this.#catalog = options.catalog;
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#decodeImage = options.decodeImage ?? decodeBrowserImage;
@@ -74,14 +77,21 @@ export class CanonicalPackSource implements EmojiAssetSource {
     const existing = this.#cache.get(key);
     if (existing) return existing;
 
-    const pending = this.#load(ref).catch((cause: unknown) => {
-      this.#cache.delete(key);
+    const pending = this.#load(ref).then((image) => {
+      if (this.#cache.get(key) === pending) {
+        const width = 'width' in image && typeof image.width === 'number' ? image.width : 1024;
+        const height = 'height' in image && typeof image.height === 'number' ? image.height : 1024;
+        this.#cache.set(key, pending, Math.max(1, width) * Math.max(1, height) * 4);
+      }
+      return image;
+    }).catch((cause: unknown) => {
+      if (this.#cache.get(key) === pending) this.#cache.delete(key);
       if (cause instanceof EmojiAssetError) throw cause;
       throw new EmojiAssetError('network', `Could not load artwork for ${ref.grapheme}`, ref, {
         cause,
       });
     });
-    this.#cache.set(key, pending);
+    this.#cache.set(key, pending, 256 * 256 * 4);
     return pending;
   }
 
@@ -92,12 +102,12 @@ export class CanonicalPackSource implements EmojiAssetSource {
       ...(ref.style === undefined ? {} : { style: ref.style }),
     });
     if (!manifestResult.ok) {
-      throw new EmojiAssetError('missing', manifestResult.error, ref);
+      throw new EmojiAssetError(manifestResult.kind === 'unavailable' ? 'network' : manifestResult.kind === 'invalid' ? 'invalid-ref' : 'missing', manifestResult.error, ref);
     }
 
     const urlResult = await this.#catalog.assetUrl(ref);
     if (!urlResult.ok) {
-      const kind = urlResult.error.includes('invalid') ? 'invalid-ref' : 'missing';
+      const kind = urlResult.kind === 'unavailable' ? 'network' : urlResult.kind === 'invalid' ? 'invalid-ref' : 'missing';
       throw new EmojiAssetError(kind, urlResult.error, ref);
     }
 

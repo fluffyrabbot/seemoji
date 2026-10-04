@@ -29,9 +29,9 @@ quick access without copying its design. **Make a copy** is the explicit copy
 operation and creates a new project with a new identity.
 
 Project JSON exports use a versioned envelope containing identity, name,
-timestamps, star metadata, and a strictly decoded `DesignDocumentV7`. Import also
-accepts bare V1 recipes or V2 scenes, migrates them with an explicit empty group
-collection. V1–V3 documents migrate to the default canvas layout. Import always creates a new project identity. Current V7 scenes require
+timestamps, star metadata, and a strictly decoded `DesignDocument (V7)`. Import also
+accepts bare V7 scenes and always creates a new project identity. Older design
+versions are rejected. Current V7 scenes require
 their group collection and reject invalid membership.
 Projects use IndexedDB. Canvas layout is project state and renders into PNGs.
 Grid visibility, snapping, and guide preferences remain separate device settings
@@ -144,9 +144,8 @@ Text boundaries remain visible for every visible text object, with contrasting w
 and dark strokes. They track the object's transform during editing, selection, and
 comic layout changes. These are editor guides and never enter the render/export graph.
 
-The Saved styles disclosure and its runtime loading path have been removed. Existing
-library records are not deleted. The standalone style data/repository modules remain
-outside the application bundle for compatibility and recovery tooling.
+The obsolete saved-style UI, library, codecs, repository, and tests have been removed.
+Built-in inspector styles remain available. No browser storage is automatically deleted.
 
 On phones, **Emoji**, **Objects**, and **Edit** switch the independently scrolling lower
 panel while the canvas and Copy/Download actions remain in view. **Projects** opens local
@@ -193,7 +192,6 @@ threshold is applied on each axis.
 Text layers support Plain, Speech, and Thought presentation with wrapped text, automatic
 padding, and a draggable tail. The bubble is part of the text object and exports with it.
 Enter saves inline text; Shift+Enter inserts a line break; Escape cancels.
-V4 documents migrate to V5 preserving their canvas layout and plain text layers.
 
 Text automatically shrinks to fit the chosen box or bubble without changing its
 bounds. Shortening text restores its size up to the selected font-size ceiling.
@@ -203,15 +201,39 @@ tail on empty canvas detaches it. Dropping onto a visible emoji attaches it,
 with the candidate speaker highlighted while dragging; Escape cancels. Speaker movement updates the tail in the same undo transaction.
 Deleting a speaker keeps its last tail position. Copying a bubble and its speaker
 together links the copies; copying only the bubble retains its original speaker.
-V5 projects migrate to V6 without adding attachments.
 
 Tail drops retain an exact speaker-local anchor through movement, rotation, and
 resizing. Choosing a speaker from the card uses a default anchor near its lower
-center. Detaching removes the anchor while keeping the endpoint. V6 attachments
-migrate to V7 using their existing endpoints, preserving the appearance of saved
-artwork. Tail coordinates may extend outside the text layer or page.
+center. Detaching removes the anchor while keeping the endpoint. Tail coordinates may extend outside the text layer or page.
 
 Free tails show a drag-to-attach hint and Choose speaker. The attached emoji chip
 opens the same picker to change speakers. Arrow keys navigate choices, Enter
 selects, and Escape closes the picker and restores focus without editing artwork.
 Selecting the current speaker preserves its exact anchor. Detach is one undo step.
+
+## Selection commands and canvas interaction
+
+Paste, Duplicate, Align, and Distribute enter through `EditorWorkspaceStore.executeSelection`.
+Commands resolve against the current editor snapshot, reject stale session epochs, and
+return an applied, rejected, or stale outcome. Accepted document changes enter the
+workspace journal synchronously and create one undo step.
+
+Selection cloning preserves paint order and remaps both group membership and bubble
+speaker references through the same ID map. A bubble copied without its speaker retains
+its external reference when that speaker exists in the destination; missing speakers
+are detached by document attachment resolution. Alignment and distribution reject the
+entire operation if its result would exceed editable position limits.
+
+Canvas artwork interactions have one pointer-owned state: transform, stroke, marquee,
+placement, tail, or idle. Tool/group changes and touch navigation discard drafts.
+Transform interruption closes the existing undo group because transforms update the
+document live; uncommitted strokes, placements, and tails do not mutate the document.
+Text entry and viewport navigation retain their separate lifecycles.
+
+Preview and PNG preparation use independent latest-task queues. Each queue retains one
+active task and only the latest waiting input; obsolete results cannot publish after a
+new request or unmount. Immutable document identity keys frames, while paint keys reuse
+stroke and raster collection identities, avoiding full point serialization during a
+transform. Frame and layer caches have 16 MiB and 32 MiB pixel budgets; PNG cache entries
+reserve their uncompressed pixel size against an 8 MiB budget. These are retention
+budgets, not a cap on total browser or in-flight rendering memory.

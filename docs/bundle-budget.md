@@ -7,13 +7,31 @@ HTML roots through static imports and JavaScript behind dynamic boundaries:
 
 | Loading class | Raw bytes | gzip-9 bytes |
 | --- | ---: | ---: |
-| Initial | 205,000 | 64,000 |
+| Initial | 218,000 | 67,500 |
 | Deferred | 12,000 | 4,500 |
 
 Both limits are independent. Total JavaScript is informational; these gates
-cap it at 231,000 raw bytes and 72,800 gzip-9 bytes. Each emitted asset is
+cap it at 230,000 raw bytes and 72,000 gzip-9 bytes. Each emitted asset is
 compressed independently, matching separately cached transfers. CSS, static
 pack manifests, and externally hosted artwork are outside this JavaScript gate.
+
+## Current refactor measurement
+
+Selection commands, unified artwork interaction state, independent preview/export
+scheduling, and memory-budgeted render caches retain the existing ceilings. Removing
+the unused A/A runtime reduces the initial graph despite adding these boundaries.
+
+| Artifact (Node 24.21.0) | Initial raw | Initial gzip-9 | Deferred raw | Deferred gzip-9 |
+| --- | ---: | ---: | ---: | ---: |
+| Before refactor | 217,216 | 67,295 | 11,062 | 4,330 |
+| After command/render refactor | 210,576 | 65,472 | 11,062 | 4,329 |
+| After schema/catalog cleanup | 210,777 | 65,606 | 11,062 | 4,333 |
+
+The final initial graph shrinks by 6,439 raw bytes and 1,689 gzip-9 bytes.
+The current schema, typed catalog recovery, and bounded decoded-artwork cache
+remain within the same ceilings. Historical
+measurements below describe previous implementations, including removed experiments
+and saved-style UI; the policy table above is authoritative for the current build.
 
 ## Contextual editor baseline
 

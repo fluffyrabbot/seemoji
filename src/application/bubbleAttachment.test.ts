@@ -42,7 +42,7 @@ describe('bubble speaker attachment transactions', () => {
     const resolved = resolveBubbleAttachments({ ...design, layers: [{ ...speaker, transform: { ...speaker.transform, x: 0.3 } }, detached] });
     expect((resolved.layers[1] as TextLayer).bubble).toEqual(detached.bubble);
     expect(decodeDesignDocument({ ...design, layers: [speaker, { ...text, bubble: { ...text.bubble, speakerId: text.id } }] }).ok).toBe(false);
-    expect(decodeDesignDocument({ ...design, version: 5, layers: [speaker, detached] })).toEqual({ ok: true, value: { ...design, layers: [speaker, detached] } });
+    expect(decodeDesignDocument({ ...design, layers: [speaker, detached] })).toEqual({ ok: true, value: { ...design, layers: [speaker, detached] } });
   });
 });
 
@@ -81,15 +81,7 @@ it.each([
   expect(editorReducer(moved, { type: 'undo' }).design).toEqual(start.design);
 });
 
-it('migrates old attachments without moving their endpoints and rejects invalid anchors', () => {
-  const old = { ...design, version: 6, layers: [speaker, text] };
-  const migrated = decodeDesignDocument(old);
-  expect(migrated.ok).toBe(true);
-  if (!migrated.ok) return;
-  const migratedText = migrated.value.layers[1] as TextLayer;
-  expect(migratedText.bubble!.tail.x).toBeCloseTo(text.bubble!.tail.x, 10);
-  expect(migratedText.bubble!.tail.y).toBeCloseTo(text.bubble!.tail.y, 10);
-  expect(migratedText.bubble!.speakerAnchor).toBeDefined();
+it('rejects invalid anchors', () => {
   for (const speakerAnchor of [null, { x: NaN, y: 0 }, { x: 0 }, { x: 0, y: Infinity }]) {
     expect(decodeDesignDocument({ ...design, layers: [speaker, { ...text, bubble: { ...text.bubble, speakerAnchor } }] }).ok).toBe(false);
   }

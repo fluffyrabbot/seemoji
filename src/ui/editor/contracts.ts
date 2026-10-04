@@ -1,4 +1,4 @@
-import type { PlacementTool } from '../placement';
+import type { PlacementTool } from '../../domain/placement';
 import type { EditorState, ExportSize } from '../../application/editor';
 import type { PackSessionSnapshot } from '../../application/packSession';
 import type { RenderCoordinator } from '../../application/renderCoordinator';
@@ -134,6 +134,7 @@ export interface EditorPageCommands {
     readonly requestPersistentStorage: () => Promise<void>;
   };
   readonly emoji: {
+    readonly reloadCatalog: () => Promise<void>;
     readonly select: (grapheme: string, target: EmojiPickTarget) => Promise<boolean>;
     readonly changePack: (snapshot: PackSnapshot, layerId: string | null) => Promise<void>;
   };

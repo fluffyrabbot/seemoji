@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createPlacedLayer } from './placement';
+import { createPlacedLayer } from '../domain/placement';
 import { layerLocalPointToWorld } from '../domain/sceneGeometry';
 
 describe('canvas placement', () => {

@@ -71,14 +71,6 @@ export interface SceneNode {
   readonly mask: readonly MaskStroke[];
 }
 
-/** The persisted recipe used before the scene/layer model. */
-export interface DesignDocumentV1 {
-  readonly version: 1;
-  readonly source: EmojiAssetRef;
-  readonly transform: Omit<Transform, 'x' | 'y'>;
-  readonly appearance: Appearance;
-}
-
 export interface EmojiLayer extends SceneNode {
   readonly kind: 'emoji';
   readonly source: EmojiAssetRef;
@@ -126,15 +118,6 @@ export interface RasterLayer extends SceneNode {
 
 export type SceneLayer = EmojiLayer | StrokeLayer | ShapeLayer | TextLayer | RasterLayer;
 
-export interface DesignDocumentV2 {
-  readonly version: 2;
-  readonly canvas: {
-    readonly background: 'transparent';
-  };
-  /** Back-to-front paint order. */
-  readonly layers: readonly SceneLayer[];
-}
-
 /** A named selection unit. Groups do not alter paint order or compositing. */
 export interface SelectionGroup {
   readonly id: string;
@@ -142,23 +125,17 @@ export interface SelectionGroup {
   readonly layerIds: readonly string[];
 }
 
-export interface DesignDocumentV3 extends Omit<DesignDocumentV2, 'version'> {
-  readonly version: 3;
-  /** Flat, non-overlapping membership; each group contains at least two layers. */
-  readonly groups: readonly SelectionGroup[];
-}
-
 export type CanvasLayout = 'default' | 'comic4' | 'comic6';
 
-export interface DesignDocumentV4 extends Omit<DesignDocumentV3, 'version' | 'canvas'> {
-  readonly version: 4;
+/** The single supported persisted scene format. */
+export interface DesignDocument {
+  readonly version: 7;
   readonly canvas: { readonly layout: CanvasLayout };
+  /** Back-to-front paint order. */
+  readonly layers: readonly SceneLayer[];
+  /** Flat, non-overlapping selection units; each contains at least two layers. */
+  readonly groups: readonly SelectionGroup[];
 }
-
-export interface DesignDocumentV5 extends Omit<DesignDocumentV4, 'version'> { readonly version: 5 }
-export interface DesignDocumentV6 extends Omit<DesignDocumentV5, 'version'> { readonly version: 6 }
-export interface DesignDocumentV7 extends Omit<DesignDocumentV6, 'version'> { readonly version: 7 }
-export type DesignDocument = DesignDocumentV7;
 
 export const DESIGN_LIMITS = {
   x: [-0.5, 0.5],

@@ -1,3 +1,4 @@
+import type { SelectionCommand } from '../application/selectionCommand';
 import {
   useCallback,
   useEffect,
@@ -18,7 +19,6 @@ import type {
   WorkspaceSnapshot,
 } from '../application/workspaceController';
 import {
-  DESIGN_LIMITS,
   getLayer,
   type DesignDocument,
   type SceneLayer,
@@ -27,11 +27,9 @@ import {
 import { decodeDesignDocument } from '../domain/designCodec';
 import { decodeProject, type Project } from '../domain/project';
 import type { ProjectQuarantineRecord } from '../domain/projectQuarantine';
-import { layerWorldBounds, unionWorldBounds } from '../domain/sceneGeometry';
-import { copySelectionGroups } from '../domain/selectionGroups';
-import { translateSelection } from '../domain/selectionTransforms';
-import EditorExperience from './experiments/EditorExperience';
-import type { EditorExperimentClient } from './experiments/contracts';
+import { captureSelection, type Alignment, type Distribution } from '../domain/selectionCommands';
+import EditorLayout from './editor/EditorLayout';
+import ExportBar from './ExportBar';
 import type {
   BrushSettings,
   CanvasSettings,
@@ -46,13 +44,12 @@ export type { Notice } from './editor/contracts';
 
 interface Props {
   readonly services: AppServices;
-  readonly experiments: EditorExperimentClient;
 }
 
 const EMPTY_PROJECTS: readonly Project[] = [];
 const EMPTY_WORKSPACE_ISSUES: WorkspaceSnapshot['issues'] = [];
 
-export default function App({ services, experiments }: Props) {
+export default function App({ services }: Props) {
   const subscribeToWorkspace = useCallback(
     (listener: () => void) => services.workspace.subscribe(listener),
     [services.workspace],
@@ -476,30 +473,18 @@ export default function App({ services, experiments }: Props) {
   const hasConflicts = presentedProjects.some((project) => project.conflict !== null);
 
   const copySelection = () => {
-    layerClipboard.current = { layers: selectedLayers,
-      groups: editor.design.groups.filter((group) => group.layerIds.every((id) => editor.selectedLayerIds.includes(id))) };
+    layerClipboard.current = captureSelection(editor.design, editor.selectedLayerIds);
     showNotice({ kind: 'status', message: `Copied ${selectedLayers.length} layer${selectedLayers.length === 1 ? '' : 's'} inside the editor.` });
   };
 
-  const pasteSelection = () => {
-    const copied = layerClipboard.current;
-    if (copied.layers.length === 0) return;
-    const transforms = new Map(translateSelection(copied.layers, { x: 0.035, y: 0.035 })
-      .map(({ layerId, transform }) => [layerId, transform]));
-    const layers = copied.layers.map((layer): SceneLayer => ({ ...layer,
-      id: crypto.randomUUID(), name: `${layer.name} copy`.slice(0, 80), transform: transforms.get(layer.id)! }));
-    const groups = copySelectionGroups(copied.groups,
-      new Map(copied.layers.map((layer, index) => [layer.id, layers[index]!.id])),
-      new Map(copied.groups.map((group) => [group.id, crypto.randomUUID()])));
-    dispatch({ type: 'insert-layers', layers, groups });
+  const executeSelection = (command: SelectionCommand) => {
+    const result = services.workspace.executeSelection(command, session.editorSessionEpoch);
+    if (result.kind === 'rejected') showNotice({ kind: 'error', message: result.error });
   };
-
-  const duplicateSelection = () => dispatch({ type: 'duplicate-layers',
-    layerIds: editor.selectedLayerIds,
-    duplicateIds: editor.selectedLayerIds.map(() => crypto.randomUUID()),
-    duplicateGroupIds: editor.design.groups
-      .filter((group) => group.layerIds.every((id) => editor.selectedLayerIds.includes(id)))
-      .map(() => crypto.randomUUID()), offset: 0.035 });
+  const pasteSelection = () => {
+    if (layerClipboard.current.layers.length) executeSelection({ kind: 'paste', source: layerClipboard.current });
+  };
+  const duplicateSelection = () => executeSelection({ kind: 'duplicate' });
 
   const groupSelection = () => {
     if (editor.selectedLayerIds.length < 2) return;
@@ -523,43 +508,8 @@ export default function App({ services, experiments }: Props) {
       ?? editor.design.layers.map((layer) => layer.id) });
   const deleteSelectedLayers = () => dispatch({ type: 'remove-layers', layerIds: editor.selectedLayerIds });
 
-  const updateSelectedLayout = (
-    updates: readonly { readonly layerId: string; readonly transform: SceneLayer['transform'] }[],
-  ) => dispatch({ type: 'update-layer-transforms', updates });
-
-  const alignSelected = (mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
-    const union = unionWorldBounds(selectedLayers);
-    if (!union || selectedLayers.length < 2) return;
-    updateSelectedLayout(selectedLayers.map((layer) => {
-      const bounds = layerWorldBounds(layer);
-      const delta = mode === 'left' ? { x: union.left - bounds.left, y: 0 }
-        : mode === 'center' ? { x: (union.left + union.right - bounds.left - bounds.right) / 2, y: 0 }
-          : mode === 'right' ? { x: union.right - bounds.right, y: 0 }
-            : mode === 'top' ? { x: 0, y: union.top - bounds.top }
-              : mode === 'middle' ? { x: 0, y: (union.top + union.bottom - bounds.top - bounds.bottom) / 2 }
-                : { x: 0, y: union.bottom - bounds.bottom };
-      return { layerId: layer.id, transform: { ...layer.transform,
-        x: Math.min(DESIGN_LIMITS.x[1], Math.max(DESIGN_LIMITS.x[0], layer.transform.x + delta.x)),
-        y: Math.min(DESIGN_LIMITS.y[1], Math.max(DESIGN_LIMITS.y[0], layer.transform.y + delta.y)) } };
-    }));
-  };
-
-  const distributeSelected = (axis: 'horizontal' | 'vertical') => {
-    if (selectedLayers.length < 3) return;
-    const measured = selectedLayers.map((layer) => ({ layer, bounds: layerWorldBounds(layer) }))
-      .sort((a, b) => axis === 'horizontal'
-        ? (a.bounds.left + a.bounds.right) - (b.bounds.left + b.bounds.right)
-        : (a.bounds.top + a.bounds.bottom) - (b.bounds.top + b.bounds.bottom));
-    const centerOf = (item: typeof measured[number]) => axis === 'horizontal'
-      ? (item.bounds.left + item.bounds.right) / 2 : (item.bounds.top + item.bounds.bottom) / 2;
-    const first = centerOf(measured[0]!);
-    const step = (centerOf(measured.at(-1)!) - first) / (measured.length - 1);
-    updateSelectedLayout(measured.map((item, index) => {
-      const delta = first + step * index - centerOf(item);
-      return { layerId: item.layer.id, transform: { ...item.layer.transform,
-        ...(axis === 'horizontal' ? { x: item.layer.transform.x + delta } : { y: item.layer.transform.y + delta }) } };
-    }));
-  };
+  const alignSelected = (mode: Alignment) => executeSelection({ kind: 'align', mode });
+  const distributeSelected = (axis: Distribution) => executeSelection({ kind: 'distribute', axis });
 
   const addPaint = () => {
     const layerId = crypto.randomUUID();
@@ -640,6 +590,7 @@ export default function App({ services, experiments }: Props) {
       requestPersistentStorage,
     },
     emoji: {
+      reloadCatalog: async () => { await services.packs.load(); },
       select: selectEmoji,
       changePack: changePackSnapshot,
     },
@@ -796,10 +747,10 @@ export default function App({ services, experiments }: Props) {
     };
   }
 
-  return <EditorExperience
+  return <EditorLayout
     model={model}
     commands={commands}
-    experiments={experiments}
+    renderExportBar={ExportBar}
   />;
 
 }
