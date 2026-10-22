@@ -45,7 +45,7 @@ test('workflow actions use reviewed Node 24-native immutable pins', async () => 
     assert.doesNotMatch(
       source,
       /^\s+node-version:\s*/m,
-      `${basename(workflowName)} must use the repository's exact .node-version pin`,
+      `${basename(workflowName)} must read the repository's major-only .node-version`,
     );
   }
 
